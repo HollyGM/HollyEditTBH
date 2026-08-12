@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import inspect
-import queue
 import sys
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import Tk, messagebox
@@ -90,7 +87,7 @@ class FinalProEditor(EnhancedProEditor):
 
     def free_slot_count(self, target: str) -> int:
         count = super().free_slot_count(target)
-        caller = inspect.currentframe().f_back.f_code.co_name  # type: ignore[union-attr]
+        caller = sys._getframe(1).f_code.co_name
         if caller == "fill_market_page" and target.startswith("Armazem "):
             return min(count, self.configured_market_slots())
         pending = getattr(self, "_market_summary_capacity", None)
@@ -121,6 +118,18 @@ class FinalProEditor(EnhancedProEditor):
         for child in children:
             yield from self._walk_widgets(child)
 
+    def _update_protection_tree(self, widget: tk.Misc) -> None:
+        try:
+            if widget.winfo_class() != "Treeview":
+                return
+            for iid in widget.get_children():
+                values = list(widget.item(iid, "values"))
+                if values and str(values[0]) == "Modo Protegido" and len(values) >= 3:
+                    values[2] = "bloqueia jogo aberto, criação, duplicação e operações de maior risco"
+                    widget.item(iid, values=values)
+        except (tk.TclError, AttributeError):
+            return
+
     def open_smart_center(self) -> None:
         before = set(self.root.winfo_children())
         super().open_smart_center()
@@ -131,6 +140,7 @@ class FinalProEditor(EnhancedProEditor):
             if child in before or not isinstance(child, tk.Toplevel):
                 continue
             for widget in self._walk_widgets(child):
+                self._update_protection_tree(widget)
                 try:
                     text = str(widget.cget("text"))
                 except (tk.TclError, AttributeError):
@@ -139,6 +149,11 @@ class FinalProEditor(EnhancedProEditor):
                 if text == "Quantidade máxima":
                     try:
                         widget.configure(text="Slots nesta rodada")
+                    except tk.TclError:
+                        pass
+                elif text == "Adicionar desejados (uso local)":
+                    try:
+                        widget.configure(text="Criar desejados (modo desprotegido)")
                     except tk.TclError:
                         pass
                 elif "O editor não consulta sua Steam" in text:
