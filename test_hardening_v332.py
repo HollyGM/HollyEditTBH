@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import safe_persistence
 import save_layer
 from app_meta import APP_VERSION
 from hollyedittbh_final import (
@@ -66,32 +67,33 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "external")
             self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
 
-    def test_race_after_precheck_is_detected_and_external_source_is_restored(self):
+    def test_race_at_atomic_commit_is_detected_and_external_source_is_restored(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "SaveFile_Live.es3"
             path.write_bytes(save_bytes("loaded"))
             save = VerifiedSaveFile.load(path)
             save.player["marker"] = "editor"
             external = save_bytes("race-winner")
-            real_replace = os.replace
+            real_replace = safe_persistence._replace_existing_with_backup
             raced = False
 
-            def replace_with_race(source, destination):
+            def replace_with_race(target, replacement, backup_path):
                 nonlocal raced
-                if not raced and Path(source) == path:
+                if not raced and Path(target) == path:
                     raced = True
                     path.write_bytes(external)
-                return real_replace(source, destination)
+                return real_replace(target, replacement, backup_path)
 
-            with patch("save_layer.os.replace", side_effect=replace_with_race):
+            with patch("safe_persistence._replace_existing_with_backup", side_effect=replace_with_race):
                 with self.assertRaises(SaveConflictError):
                     save.save(path, backup=True)
 
             self.assertTrue(raced)
             self.assertEqual(path.read_bytes(), external)
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "race-winner")
+            self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
 
-    def test_install_failure_restores_original_source(self):
+    def test_atomic_replace_failure_keeps_original_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "SaveFile_Live.es3"
             original = save_bytes("original")
@@ -99,7 +101,7 @@ class TransactionalSaveTests(unittest.TestCase):
             save = VerifiedSaveFile.load(path)
             save.player["marker"] = "editor"
 
-            with patch("safe_persistence.os.rename", side_effect=OSError("install failure")):
+            with patch("safe_persistence._replace_existing_with_backup", side_effect=OSError("replace failure")):
                 with self.assertRaises(OSError):
                     save.save(path, backup=True)
 
@@ -107,7 +109,7 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "original")
             self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
 
-    def test_successful_saves_refresh_origin_fingerprint(self):
+    def test_successful_saves_refresh_origin_fingerprint_and_backup_exact_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "SaveFile_Live.es3"
             path.write_bytes(save_bytes("v1"))
@@ -118,11 +120,14 @@ class TransactionalSaveTests(unittest.TestCase):
             save.save(path, backup=True)
             second_source = save._source_sha256
             self.assertNotEqual(first_source, second_source)
+            self.assertIsNotNone(save.last_backup_path)
+            self.assertEqual(BaseSaveFile.load(save.last_backup_path).player["marker"], "v1")
 
             save.player["marker"] = "v3"
             save.save(path, backup=True)
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "v3")
             self.assertNotEqual(second_source, save._source_sha256)
+            self.assertEqual(BaseSaveFile.load(save.last_backup_path).player["marker"], "v2")
 
     def test_unicode_path_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -179,10 +184,19 @@ class BuildReproducibilityTests(unittest.TestCase):
     def test_toolchain_and_actions_remain_pinned(self):
         base = Path(__file__).resolve().parent
         workflow = (base / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-        requirements = (base / "requirements-build.txt").read_text(encoding="utf-8")
+        requirements = (base / "requirements-build.txt").read_text(encoding="utf-8").casefold()
 
         self.assertIn("python-version: '3.12.10'", workflow)
-        self.assertIn("pyinstaller==6.22.0", requirements.casefold())
+        for requirement in (
+            "pyinstaller==6.22.0",
+            "pyinstaller-hooks-contrib==2026.6",
+            "altgraph==0.17.5",
+            "pefile==2024.8.26",
+            "pywin32-ctypes==0.2.3",
+            "packaging==26.2",
+            "setuptools==84.0.0",
+        ):
+            self.assertIn(requirement, requirements)
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", workflow)
         self.assertIn("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97", workflow)
         self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", workflow)
