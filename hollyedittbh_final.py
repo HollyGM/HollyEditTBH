@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -14,6 +15,21 @@ from market_snapshot_guard import fetch_market_snapshot_guarded
 
 class FinalProEditor(EnhancedProEditor):
     """Camada final 3.3.1: endurece operações de risco sem remover o editor."""
+
+    def file_signature(self, path: Path | None = None):
+        """Identifica o conteúdo do save, não apenas tamanho e timestamp."""
+        target = path or getattr(self, "path", None)
+        if target is None:
+            return None
+        try:
+            stat = target.stat()
+            digest = hashlib.sha256()
+            with target.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return (stat.st_mtime_ns, stat.st_size, digest.hexdigest())
+        except OSError:
+            return None
 
     def on_protected_mode_changed(self) -> None:
         enabled = bool(self.protected_mode_var.get())
