@@ -9,7 +9,7 @@ datas = [
 ]
 
 a = Analysis(
-    ['hollyedittbh_next.py'],
+    ['hollyedittbh_final.py'],
     pathex=[],
     binaries=[],
     datas=datas,
