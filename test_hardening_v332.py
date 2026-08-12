@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -202,26 +203,40 @@ class ProtectedModeFailSafeTests(unittest.TestCase):
         inherited_save.assert_not_called()
 
     def test_process_probe_fails_closed_on_tasklist_error(self):
-        with patch("hollyedittbh_final.os.name", "nt"), patch(
-            "hollyedittbh_final.subprocess.run", side_effect=OSError("tasklist unavailable")
-        ):
+        with patch("hollyedittbh_final.os.name", "nt"), patch.dict(
+            "hollyedittbh_final.os.environ", {"SystemRoot": r"C:\Windows"}, clear=False
+        ), patch("hollyedittbh_final.subprocess.run", side_effect=OSError("tasklist unavailable")):
             self.assertTrue(taskbar_hero_is_running_fail_safe())
 
     def test_process_probe_fails_closed_on_nonzero_tasklist_status(self):
         completed = SimpleNamespace(returncode=1, stdout="")
-        with patch("hollyedittbh_final.os.name", "nt"), patch(
-            "hollyedittbh_final.subprocess.run", return_value=completed
-        ):
+        with patch("hollyedittbh_final.os.name", "nt"), patch.dict(
+            "hollyedittbh_final.os.environ", {"SystemRoot": r"C:\Windows"}, clear=False
+        ), patch("hollyedittbh_final.subprocess.run", return_value=completed):
             self.assertTrue(taskbar_hero_is_running_fail_safe())
 
     def test_process_probe_distinguishes_absent_and_running_game(self):
         absent = SimpleNamespace(returncode=0, stdout='INFO: No tasks are running which match the specified criteria.\n')
         running = SimpleNamespace(returncode=0, stdout='"TaskBarHero.exe","1234","Console","1","100 K"\n')
-        with patch("hollyedittbh_final.os.name", "nt"):
+        with patch("hollyedittbh_final.os.name", "nt"), patch.dict(
+            "hollyedittbh_final.os.environ", {"SystemRoot": r"C:\Windows"}, clear=False
+        ):
             with patch("hollyedittbh_final.subprocess.run", return_value=absent):
                 self.assertFalse(taskbar_hero_is_running_fail_safe())
             with patch("hollyedittbh_final.subprocess.run", return_value=running):
                 self.assertTrue(taskbar_hero_is_running_fail_safe())
+
+    def test_process_probe_uses_system32_tasklist_and_tolerant_decode(self):
+        completed = SimpleNamespace(returncode=0, stdout="")
+        with patch("hollyedittbh_final.os.name", "nt"), patch.dict(
+            "hollyedittbh_final.os.environ", {"SystemRoot": r"D:\WinRoot"}, clear=False
+        ), patch("hollyedittbh_final.subprocess.run", return_value=completed) as run:
+            self.assertFalse(taskbar_hero_is_running_fail_safe())
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], r"D:\WinRoot\System32\tasklist.exe")
+        self.assertEqual(run.call_args.kwargs["errors"], "replace")
+        self.assertEqual(run.call_args.kwargs["timeout"], 3)
 
 
 class BuildReproducibilityTests(unittest.TestCase):
@@ -230,7 +245,7 @@ class BuildReproducibilityTests(unittest.TestCase):
         workflow = (base / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
         requirements = (base / "requirements-build.txt").read_text(encoding="utf-8").casefold()
 
-        self.assertIn("python-version: '3.12.10'", workflow)
+        self.assertRegex(workflow, r"python-version\s*:\s*['\"]?3\.12\.10['\"]?")
         for requirement in (
             "pyinstaller==6.22.0",
             "pyinstaller-hooks-contrib==2026.6",
@@ -244,7 +259,7 @@ class BuildReproducibilityTests(unittest.TestCase):
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", workflow)
         self.assertIn("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97", workflow)
         self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", workflow)
-        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertRegex(workflow, r"permissions\s*:\s*\r?\n\s*contents\s*:\s*read\b")
 
     def test_version_is_consistent_for_332(self):
         base = Path(__file__).resolve().parent
@@ -253,8 +268,13 @@ class BuildReproducibilityTests(unittest.TestCase):
 
         self.assertEqual(APP_VERSION, "3.3.2")
         self.assertIn("FileVersion', '3.3.2'", version_info)
+        self.assertIn("ProductVersion', '3.3.2'", version_info)
         self.assertIn("filevers=(3, 3, 2, 0)", version_info)
         self.assertIn("HollyEditTBH-v3.3.2-windows", workflow)
+        self.assertRegex(workflow, r"\$allowedVersions\s*=\s*@\('3\.3\.2',\s*'3\.3\.2\.0'\)")
+        self.assertIn("$allowedVersions -notcontains $fileVersion", workflow)
+        self.assertIn("$allowedVersions -notcontains $productVersion", workflow)
+        self.assertNotIn("-notlike '3.3.2*'", workflow)
 
 
 if __name__ == "__main__":
