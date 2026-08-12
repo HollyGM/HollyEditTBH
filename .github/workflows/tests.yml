@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - 'agent/**'
   pull_request:
 
 permissions:
@@ -20,9 +19,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Prepare Taskbar Hero test path
@@ -75,7 +74,7 @@ jobs:
           "$hash  HollyEditTBH.exe" | Set-Content -Encoding ascii (Join-Path $PWD 'dist\SHA256SUMS.txt')
           Write-Host "SHA-256: $hash"
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: HollyEditTBH-v3.3.1-windows
           path: |
