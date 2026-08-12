@@ -64,16 +64,21 @@ def taskbar_hero_is_running_fail_safe() -> bool:
     """No Windows, falha de detecção é tratada como estado inseguro para salvar."""
     if os.name != "nt":
         return False
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        return True
+    tasklist = os.path.join(system_root, "System32", "tasklist.exe")
     try:
         completed = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq TaskBarHero.exe", "/FO", "CSV", "/NH"],
+            [tasklist, "/FI", "IMAGENAME eq TaskBarHero.exe", "/FO", "CSV", "/NH"],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=3,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             check=False,
         )
-    except (OSError, subprocess.SubprocessError, UnicodeError):
+    except (OSError, subprocess.SubprocessError):
         return True
     if completed.returncode != 0:
         return True
