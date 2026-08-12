@@ -19,9 +19,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - name: Prepare Taskbar Hero test path
@@ -74,7 +74,7 @@ jobs:
           "$hash  HollyEditTBH.exe" | Set-Content -Encoding ascii (Join-Path $PWD 'dist\SHA256SUMS.txt')
           Write-Host "SHA-256: $hash"
       - name: Upload Windows package
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: HollyEditTBH-v3.3.1-windows
           path: |
