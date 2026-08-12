@@ -28,12 +28,14 @@ A 3.3.1 é a versão de fechamento da auditoria técnica iniciada na 3.3.0. O fo
 - compatibilidade correta para amuleto, brinco, anel e abraçadeira;
 - fila conservadora de candidatos ao Mercado usando somente itens já existentes e não modificados;
 - snapshot público e cacheado do Steam Community Market usado apenas como referência de preço;
-- proteção contra substituir um snapshot bom por resposta parcial/truncada da Steam;
+- proteção contra substituir um snapshot completo por resposta parcial/truncada da Steam;
 - preparação do Mercado limitada por padrão aos **4 slots da rodada**;
 - fila de reciclagem que preserva a melhor cópia e não converte itens automaticamente;
 - desbloqueio conservador de tutoriais, heróis, pets, atributos e receitas conhecidas;
 - atualização automática do catálogo com validação contra respostas parciais e regressões abruptas;
 - Modo Protegido com detecção do jogo aberto, mudança externa do save e isolamento de operações de maior risco;
+- assinatura local do arquivo por tamanho, timestamp e SHA-256 do conteúdo para detectar alteração externa mesmo com tamanho e horário preservados;
+- estado de integridade restaurado corretamente quando a persistência falha antes da substituição do arquivo;
 - validação de referências, identificadores, locais e estruturas de encantamento;
 - executável Windows validado por testes, PyInstaller, metadados e smoke test no GitHub Actions.
 
@@ -46,7 +48,7 @@ O Modo Protegido fica ativo por padrão e, na 3.3.1, passou a ter uma fronteira 
 - não equipa itens criados durante a sessão;
 - itens modificados/criados continuam excluídos da inteligência de Mercado;
 - bloqueia salvamento enquanto o Taskbar Hero estiver aberto;
-- bloqueia salvamento quando o arquivo mudou no disco depois de ser carregado;
+- bloqueia salvamento quando o conteúdo do arquivo mudou no disco depois de ser carregado, inclusive quando tamanho e timestamp permanecem iguais;
 - mantém backup e validação estrutural antes da gravação.
 
 A criação e duplicação local continuam disponíveis somente após desativação consciente do Modo Protegido. Isso não transforma a operação em segura ou aceita pelo jogo.
@@ -66,7 +68,7 @@ O HollyEditTBH:
 - não promete elegibilidade, preço, venda ou liquidez;
 - não trata quantidade de anúncios concorrentes como prova de demanda;
 - usa páginas públicas somente como sinal auxiliar e cacheado;
-- preserva um cache anterior quando a nova coleta parece truncada;
+- preserva um snapshot completo anterior quando a nova coleta parece truncada;
 - mantém a decisão final de listagem dentro do jogo/Steam.
 
 Para contas que efetivamente disponham de mais slots, o limite técnico pode ser ajustado pela variável de ambiente `HOLLYEDIT_MARKET_SLOTS`, entre 1 e 12.
@@ -125,14 +127,17 @@ Executar a mesma suíte usada pelo CI:
 py -3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py
 ```
 
-O CI também executa:
+O gate final contém **55 testes automatizados**. O CI também executa:
 
 - `python -m compileall -q .`;
+- smoke test de 3 segundos da ponte `tbh_save_editor.py`;
 - build pelo PyInstaller;
 - conferência de `FileVersion 3.3.1`;
 - inicialização real do `.exe` por 5 segundos;
 - geração de `SHA256SUMS.txt`;
 - publicação de `HollyEditTBH.exe` e checksum no mesmo artefato.
+
+O workflow usa `actions/checkout@v7.0.1`, `actions/setup-python@v7.0.0` e `actions/upload-artifact@v7.0.1`, roda em pull requests e após integração na `main`, e evita gates duplicados de push de branch + PR.
 
 ## Gerar o executável
 
@@ -146,6 +151,10 @@ Saída esperada:
 ```text
 dist/HollyEditTBH.exe
 ```
+
+## Verificação do pacote
+
+O GitHub Actions publica `HollyEditTBH.exe` e `SHA256SUMS.txt` no mesmo artefato. O checksum correspondente ao executável deve ser conferido a partir desse arquivo do **mesmo build**, pois o empacotamento PyInstaller não é tratado como byte a byte reprodutível entre execuções independentes.
 
 ## Atalhos
 
