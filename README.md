@@ -17,7 +17,8 @@ A auditoria histórica da 3.3.1 permanece em `AUDITORIA_FINAL_v3.3.1.md` e conti
 - abre e salva `SaveFile_Live.es3` com criptografia e assinatura de integridade;
 - cria backup antes de substituir um save previamente carregado;
 - prepara o novo save em arquivo temporário no mesmo diretório, executa `flush` + `fsync` e valida SHA-256 antes do commit;
-- no Windows, usa `ReplaceFileW` para substituir atomicamente o save e capturar os bytes exatos que ocupavam o caminho no instante do commit;
+- no Windows, usa `ReplaceFileW` para combinar em uma única chamada nativa a substituição e a captura do conteúdo anterior;
+- trata os estados de falha documentados de `ReplaceFileW` e tenta restaurar o caminho principal sem sobrescrever um arquivo concorrente que tenha reaparecido;
 - rejeita e restaura uma versão externa quando o conteúdo substituído não corresponde ao SHA-256 da origem carregada;
 - abre, edita e exporta dumps JSON pela interface validada;
 - interface em português do Brasil, com contraste, raridade visual e fluxo guiado;
@@ -46,14 +47,15 @@ A auditoria histórica da 3.3.1 permanece em `AUDITORIA_FINAL_v3.3.1.md` e conti
 
 A 3.3.1 já gravava por temporário + `fsync` + `os.replace`, mas a verificação de alteração externa era feita na camada de interface antes da persistência. Isso deixava uma janela curta entre a conferência e a substituição efetiva.
 
-Na 3.3.2, `VerifiedSaveFile` registra o SHA-256 dos bytes exatos carregados. Antes da gravação, o novo blob é gerado em temporário e validado. No Windows, `ReplaceFileW` faz uma substituição atômica e gera simultaneamente uma cópia do arquivo realmente substituído. O hash dessa cópia é então comparado com a origem esperada:
+Na 3.3.2, `VerifiedSaveFile` registra o SHA-256 dos bytes exatos carregados. Antes da gravação, o novo blob é gerado em temporário e validado. No Windows, `ReplaceFileW` combina em uma única função as etapas de substituição e pode gerar simultaneamente uma cópia do arquivo substituído. O hash dessa cópia é então comparado com a origem esperada:
 
 - se coincidir, o commit é aceito e o fingerprint interno é atualizado;
 - se divergir, a versão externa capturada é restaurada e o novo blob é rejeitado;
-- se a troca falhar antes do commit, o original permanece no caminho;
+- se a troca falhar antes de alterar o caminho, o original permanece no lugar;
+- se `ReplaceFileW` retornar um estado documentado em que o original já foi movido para o backup e o caminho principal ficou ausente, a camada tenta restaurar o original sem substituir qualquer arquivo que tenha reaparecido;
 - se ocorrer uma condição excepcional após a troca e a restauração automática não puder ser confirmada, a cópia capturada é preservada e não é apagada silenciosamente.
 
-O produto suportado é Windows. Fora do Windows existe apenas um fallback para desenvolvimento; os gates de release e as garantias de substituição atômica são validados no runner Windows.
+O produto suportado é Windows. Fora do Windows existe apenas um fallback para desenvolvimento; os gates de release e as garantias de recuperação são validados no runner Windows.
 
 ## Modo Protegido
 
@@ -104,7 +106,7 @@ Executar a mesma suíte usada pelo CI:
 py -3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py
 ```
 
-A suíte proposta contém **66 testes automatizados**: os 55 do baseline 3.3.1 mais 11 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição atômica, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível e falhas de detecção do processo do jogo.
+A suíte proposta contém **67 testes automatizados**: os 55 do baseline 3.3.1 mais 12 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível e falhas de detecção do processo do jogo.
 
 O CI também executa:
 
