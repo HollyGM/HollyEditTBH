@@ -1,5 +1,4 @@
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,6 +119,38 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertTrue(safe_persistence._recover_failed_windows_replace(path, backup))
             self.assertEqual(path.read_bytes(), original)
             self.assertFalse(backup.exists())
+
+    def test_rollback_preserves_second_concurrent_save_instead_of_deleting_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "SaveFile_Live.es3"
+            captured = Path(temp_dir) / "captured.es3"
+            editor_blob = save_bytes("editor")
+            first_external = save_bytes("external-1")
+            second_external = save_bytes("external-2")
+            path.write_bytes(editor_blob)
+            captured.write_bytes(first_external)
+
+            real_replace = safe_persistence._replace_existing_with_backup
+            injected = False
+
+            def replace_with_second_external(target, replacement, backup_path):
+                nonlocal injected
+                if not injected and Path(target) == path:
+                    injected = True
+                    path.write_bytes(second_external)
+                return real_replace(target, replacement, backup_path)
+
+            with patch("safe_persistence._replace_existing_with_backup", side_effect=replace_with_second_external):
+                restored, recovery = safe_persistence._restore_captured_source(
+                    path,
+                    captured,
+                    safe_persistence.file_sha256_bytes(editor_blob) if hasattr(safe_persistence, "file_sha256_bytes") else __import__("hashlib").sha256(editor_blob).hexdigest(),
+                )
+
+            self.assertFalse(restored)
+            self.assertIsNotNone(recovery)
+            self.assertEqual(BaseSaveFile.load(path).player["marker"], "external-1")
+            self.assertEqual(BaseSaveFile.load(recovery).player["marker"], "external-2")
 
     def test_successful_saves_refresh_origin_fingerprint_and_backup_exact_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
