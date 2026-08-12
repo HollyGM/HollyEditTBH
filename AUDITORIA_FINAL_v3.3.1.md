@@ -10,8 +10,9 @@ O candidato foi validado em Windows Server 2025 com Python 3.12.10 e PyInstaller
 
 Resultado dos gates de release:
 
-- **50/50 testes automatizados aprovados**;
+- **55/55 testes automatizados aprovados**;
 - `python -m compileall -q .` aprovado;
+- execução direta da ponte histórica `tbh_save_editor.py` mantida ativa por 3 segundos e redirecionada para a aplicação final;
 - build PyInstaller concluído pela entrada `hollyedittbh_final.py`;
 - `FileVersion` confirmada como **3.3.1**;
 - `HollyEditTBH.exe` iniciado e mantido ativo por 5 segundos no smoke test;
@@ -26,7 +27,8 @@ O SHA-256 não é fixado neste relatório porque o executável empacotado pelo P
 Foram revisados:
 
 - leitura, descriptografia, serialização, HMAC e gravação do `.es3`;
-- backup e substituição atômica do save;
+- backup, `fsync` e substituição atômica do save;
+- detecção de mudança externa do arquivo;
 - validação estrutural e reparos seguros;
 - inventário, armazém, itens equipados e referências por `UniqueId`;
 - compatibilidade de slots, inclusive amuleto, brinco, anel e abraçadeira;
@@ -39,7 +41,7 @@ Foram revisados:
 - consulta pública e cache do Steam Community Market;
 - atualização do catálogo do jogo;
 - interface e textos de segurança;
-- entrada do código-fonte, PyInstaller, CI, metadados e documentação.
+- entrada do código-fonte, PyInstaller, GitHub Actions, metadados e documentação.
 
 ## Achados críticos e altos encerrados
 
@@ -76,6 +78,18 @@ Na versão anterior, o Modo Protegido limitava o tamanho de lotes, mas ainda per
 - itens criados ou modificados continuam excluídos da inteligência de Mercado;
 - criação/duplicação local só volta a aparecer após desativação consciente do Modo Protegido.
 
+### Detecção de mudança externa do save
+
+A assinatura usada pelo Modo Protegido deixou de depender somente de `mtime` e tamanho. A camada final inclui SHA-256 do conteúdo do arquivo, de modo que uma alteração de mesmo tamanho com timestamp preservado também impede uma gravação sobre estado externo mais recente.
+
+Há regressão que modifica o conteúdo mantendo tamanho e timestamp e confirma que a assinatura muda.
+
+### Estado de integridade após falha de persistência
+
+A geração dos bytes do `.es3` recalcula `SystemInfo`, mas uma falha posterior de `os.replace` não deve fazer a memória afirmar que um arquivo originalmente inválido foi reparado. A 3.3.1 usa `VerifiedSaveFile`, que restaura o estado anterior de `integrity_valid` quando a persistência falha e só mantém o estado reparado após gravação bem-sucedida.
+
+O teste correspondente simula falha de disco, confirma que `integrity_valid` permanece falso e depois valida a recuperação por gravação normal e releitura.
+
 ### Caminho direto de alteração do save
 
 `run_save_layer.py` permitia `set` e `import` arbitrários fora das validações da aplicação principal. Como não integrava o produto final nem o Modo Protegido, foi removido da distribuição-fonte.
@@ -91,7 +105,7 @@ Na 3.3.1:
 - `hollyedittbh_final.py` é a entrada oficial;
 - `HollyEditTBH.spec` empacota somente a entrada final.
 
-A ponte de compatibilidade é coberta por teste automatizado.
+A ponte é coberta por teste de importação e por smoke test de execução direta no Windows CI.
 
 ## Mercado Steam
 
@@ -112,7 +126,8 @@ A consulta do Steam Community Market:
 - não usa cookies privados;
 - não envia itens;
 - mantém cache de baixa frequência;
-- não substitui um cache melhor por uma resposta parcial/truncada;
+- preserva um snapshot completo anterior quando uma nova coleta é parcial, ainda que a resposta parcial contenha mais linhas;
+- não persiste coleta incompleta sobre um cache válido;
 - não promete preço, venda, demanda ou elegibilidade.
 
 ### Política oficial considerada
@@ -153,7 +168,7 @@ Foram preservados:
 - `fsync` antes da substituição;
 - `os.replace` para gravação atômica.
 
-Os testes confirmam round-trip de leitura/gravação, detecção de integridade inválida, recálculo da assinatura e preservação do backup.
+A camada final adiciona somente garantias operacionais ao redor desse núcleo: hash de conteúdo para detectar mudança externa e restauração do estado de integridade em falha de persistência. Os testes confirmam round-trip, detecção de integridade inválida, recálculo da assinatura, preservação do backup e comportamento correto em falha simulada de gravação.
 
 ## Encantamentos
 
@@ -215,19 +230,20 @@ O README foi atualizado para refletir a versão 3.3.1, a entrada suportada, todo
 
 O workflow Windows final executa:
 
-1. checkout;
-2. Python 3.12;
+1. `actions/checkout@v7.0.1`;
+2. `actions/setup-python@v7.0.0` com Python 3.12;
 3. preparação do caminho de teste do Taskbar Hero;
 4. `compileall`;
-5. cinco suítes de regressão;
-6. instalação do PyInstaller;
-7. build do executável;
-8. conferência de `FileVersion 3.3.1`;
-9. smoke test de cinco segundos;
-10. geração de SHA-256;
-11. upload do executável e de `SHA256SUMS.txt` no mesmo artefato.
+5. cinco suítes de regressão, totalizando 55 testes;
+6. smoke test da ponte `tbh_save_editor.py`;
+7. instalação do PyInstaller;
+8. build do executável;
+9. conferência de `FileVersion 3.3.1`;
+10. smoke test do executável por cinco segundos;
+11. geração de SHA-256;
+12. `actions/upload-artifact@v7.0.1` com o executável e `SHA256SUMS.txt`.
 
-Também foram adicionados `permissions: contents: read` e controle de concorrência para cancelar execuções obsoletas do mesmo ref.
+O workflow roda em pull requests e em `push` para a `main`, evitando a antiga duplicação de gate em push de branch + PR. Também usa `permissions: contents: read` e controle de concorrência para cancelar execuções obsoletas do mesmo ref.
 
 ## Pendências que não bloqueiam a versão
 
