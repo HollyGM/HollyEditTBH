@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import time
@@ -5,9 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from hollyedittbh_final import FinalProEditor
+from hollyedittbh_final import FinalProEditor, VerifiedSaveFile
 from market_intelligence import MarketQuote, MarketSnapshot
 from market_snapshot_guard import prefer_snapshot
+from save_layer import SaveFile as BaseSaveFile
 
 
 def minimal_player():
@@ -26,6 +28,18 @@ def storage_slot(index, uid=0, stash=False):
         "ItemUniqueId": uid,
         "IsUnLock" if stash else "IsUnlock": True,
         "IsUnlockedByRune": False,
+    }
+
+
+def invalid_es3_root():
+    account = {"ownerSteamId": "123456"}
+    player = minimal_player()
+    account_json = json.dumps(account, ensure_ascii=False, separators=(",", ":"))
+    player_json = json.dumps(player, ensure_ascii=False, separators=(",", ":"))
+    return {
+        "AccountSaveData": {"__type": "System.String", "value": account_json},
+        "PlayerSaveData": {"__type": "System.String", "value": player_json},
+        "SystemInfo": {"__type": "System.String", "value": "invalid"},
     }
 
 
@@ -123,6 +137,21 @@ class ProtectedModeFinalTests(unittest.TestCase):
         self.assertIsNotNone(after)
         self.assertEqual(before[:2], after[:2])
         self.assertNotEqual(before, after)
+
+
+class SavePersistenceStateTests(unittest.TestCase):
+    def test_failed_replace_does_not_claim_invalid_source_was_repaired(self):
+        save = VerifiedSaveFile(invalid_es3_root())
+        self.assertFalse(save.integrity_valid)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "SaveFile_Live.es3"
+            with patch("save_layer.os.replace", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    save.save(path, backup=False)
+            self.assertFalse(save.integrity_valid)
+            save.save(path, backup=False)
+            self.assertTrue(save.integrity_valid)
+            self.assertTrue(BaseSaveFile.load(path).integrity_valid)
 
 
 class MarketSnapshotGuardTests(unittest.TestCase):
