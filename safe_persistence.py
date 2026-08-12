@@ -137,26 +137,42 @@ def _restore_captured_source(
     target: Path,
     captured_source: Path,
     expected_installed_sha256: str,
-) -> bool:
-    """Restaura a fonte capturada apenas se target ainda for o blob instalado por nós."""
+) -> tuple[bool, Path | None]:
+    """Tenta rollback sem apagar uma versão concorrente mais nova.
+
+    Retorna ``(True, None)`` somente quando o arquivo substituído durante o
+    rollback é comprovadamente o blob gerado pelo editor. Se outro conteúdo for
+    capturado, ele permanece preservado e é devolvido como caminho de recovery.
+    """
     try:
         if file_sha256(target) != expected_installed_sha256:
-            return False
+            return False, None
     except OSError:
-        return False
+        return False, None
 
-    rejected_new = _unique_path(target, "rejected", visible_backup=False)
+    rejected_new = _unique_path(target, "rollback", visible_backup=True)
     try:
         _replace_existing_with_backup(target, captured_source, rejected_new)
-        # O arquivo rejeitado não contém dados do usuário que precisem ser
-        # preservados: é exatamente o blob que acabamos de gerar.
-        try:
-            rejected_new.unlink()
-        except OSError:
-            pass
-        return True
     except OSError:
-        return False
+        return False, None
+
+    try:
+        rejected_hash = file_sha256(rejected_new)
+    except OSError:
+        return False, rejected_new if rejected_new.exists() else None
+
+    if rejected_hash != expected_installed_sha256:
+        # Outro processo gravou entre a checagem e o rollback. O caminho target
+        # contém a versão capturada no primeiro commit; a versão mais nova fica
+        # preservada em rejected_new para recuperação explícita.
+        return False, rejected_new
+
+    try:
+        rejected_new.unlink()
+    except OSError:
+        # É o blob gerado por nós, portanto mantê-lo não ameaça dados do usuário.
+        pass
+    return True, None
 
 
 def write_save_transactionally(
@@ -217,11 +233,17 @@ def write_save_transactionally(
             )
 
         if source_at_commit_sha256 != expected_sha256:
-            restored = _restore_captured_source(target, captured_source, blob_sha256)
+            restored, concurrent_recovery = _restore_captured_source(target, captured_source, blob_sha256)
             if restored:
                 captured_source = None
                 raise SaveConflictError(
                     "O save mudou durante o commit. A versão externa foi restaurada e as alterações do editor não foram instaladas."
+                )
+            if concurrent_recovery is not None:
+                captured_source = None  # a primeira versão externa agora ocupa target
+                raise OSError(
+                    "Novo conflito detectado durante o rollback. A primeira versão externa foi restaurada ao caminho principal "
+                    f"e a versão concorrente mais nova foi preservada em {concurrent_recovery.name}."
                 )
             raise OSError(
                 f"Foi detectado conflito durante o commit. A versão substituída permanece preservada em {captured_source.name}; o editor não a apagou."
