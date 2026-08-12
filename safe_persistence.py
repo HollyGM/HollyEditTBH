@@ -105,7 +105,8 @@ def write_save_transactionally(
     """
     target = Path(os.path.abspath(os.fspath(path)))
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp_path, blob_sha256 = _write_verified_temp(target, blob)
+    prepared_path, blob_sha256 = _write_verified_temp(target, blob)
+    temp_path: Path | None = prepared_path
     rollback_path: Path | None = None
     source_moved = False
 
@@ -116,7 +117,7 @@ def write_save_transactionally(
                 backup_path = _timestamped_backup_path(target)
                 shutil.copy2(target, backup_path)
             save_layer.os.replace(temp_path, target)
-            temp_path = Path()
+            temp_path = None
             return str(target), backup_path, blob_sha256
 
         _assert_expected_source(target, expected_sha256)
@@ -143,7 +144,7 @@ def write_save_transactionally(
         # No Windows, produto suportado, rename não substitui um destino que
         # reapareça entre a checagem acima e a instalação.
         os.rename(temp_path, target)
-        temp_path = Path()
+        temp_path = None
         source_moved = False
 
         if not backup and rollback_path.exists():
@@ -160,7 +161,7 @@ def write_save_transactionally(
                 ) from exc
         raise
     finally:
-        if temp_path and temp_path.exists():
+        if temp_path is not None and temp_path.exists():
             try:
                 temp_path.unlink()
             except OSError:
