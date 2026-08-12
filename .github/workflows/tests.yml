@@ -18,6 +18,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Prepare Taskbar Hero test path
+        shell: pwsh
+        run: |
+          $gameDir = Join-Path $HOME 'AppData\LocalLow\TesseractStudio\TaskbarHero'
+          New-Item -ItemType Directory -Force -Path $gameDir | Out-Null
+          New-Item -ItemType File -Force -Path (Join-Path $gameDir 'SaveFile_Live.es3') | Out-Null
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
