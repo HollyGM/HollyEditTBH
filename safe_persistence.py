@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import os
+import secrets
 import shutil
 import tempfile
 import time
@@ -26,22 +28,17 @@ def file_sha256(path: str | os.PathLike[str]) -> str:
     return digest.hexdigest()
 
 
-def _timestamped_backup_path(path: Path) -> Path:
+def _unique_path(path: Path, label: str, *, visible_backup: bool) -> Path:
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    candidate = path.with_name(f"{path.stem}_backup_{stamp}{path.suffix}")
-    suffix = 2
-    while candidate.exists():
-        candidate = path.with_name(f"{path.stem}_backup_{stamp}_{suffix}{path.suffix}")
-        suffix += 1
-    return candidate
-
-
-def _private_rollback_path(path: Path) -> Path:
-    fd, raw_path = tempfile.mkstemp(prefix=f".{path.name}.original-", suffix=".tmp", dir=path.parent)
-    os.close(fd)
-    rollback = Path(raw_path)
-    rollback.unlink()
-    return rollback
+    for _attempt in range(16):
+        token = secrets.token_hex(4)
+        if visible_backup:
+            candidate = path.with_name(f"{path.stem}_backup_{stamp}_{os.getpid()}_{token}{path.suffix}")
+        else:
+            candidate = path.with_name(f".{path.name}.{label}-{os.getpid()}-{token}.tmp")
+        if not candidate.exists():
+            return candidate
+    raise OSError("não foi possível reservar um nome seguro para recuperação do save")
 
 
 def _write_verified_temp(path: Path, blob: bytes) -> tuple[Path, str]:
@@ -77,11 +74,58 @@ def _assert_expected_source(path: Path, expected_sha256: str) -> None:
         )
 
 
-def _restore_original_if_safe(original_path: Path, rollback_path: Path) -> bool:
-    if not rollback_path.exists() or original_path.exists():
-        return False
+def _windows_replace_with_backup(target: Path, replacement: Path, backup_path: Path) -> None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    replace_file = kernel32.ReplaceFileW
+    replace_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    replace_file.restype = ctypes.c_int
+    ctypes.set_last_error(0)
+    success = replace_file(str(target), str(replacement), str(backup_path), 0, None, None)
+    if not success:
+        error = ctypes.get_last_error()
+        raise OSError(error, ctypes.FormatError(error), str(target))
+
+
+def _replace_existing_with_backup(target: Path, replacement: Path, backup_path: Path) -> None:
+    """Substitui target e captura exatamente o conteúdo substituído em backup_path."""
+    if os.name == "nt":
+        _windows_replace_with_backup(target, replacement, backup_path)
+        return
+
+    # Fallback de desenvolvimento fora do Windows. O produto suportado e o CI de
+    # release usam ReplaceFileW, que oferece a garantia atômica descrita acima.
+    shutil.copy2(target, backup_path)
+    save_layer.os.replace(replacement, target)
+
+
+def _restore_captured_source(
+    target: Path,
+    captured_source: Path,
+    expected_installed_sha256: str,
+) -> bool:
+    """Restaura a fonte capturada apenas se target ainda for o blob instalado por nós."""
     try:
-        save_layer.os.replace(rollback_path, original_path)
+        if file_sha256(target) != expected_installed_sha256:
+            return False
+    except OSError:
+        return False
+
+    rejected_new = _unique_path(target, "rejected", visible_backup=False)
+    try:
+        _replace_existing_with_backup(target, captured_source, rejected_new)
+        # O arquivo rejeitado não contém dados do usuário que precisem ser
+        # preservados: é exatamente o blob que acabamos de gerar.
+        try:
+            rejected_new.unlink()
+        except OSError:
+            pass
         return True
     except OSError:
         return False
@@ -94,72 +138,77 @@ def write_save_transactionally(
     backup: bool,
     expected_sha256: str | None,
 ) -> tuple[str, Path | None, str]:
-    """Persiste bytes no mesmo diretório sem sobrescrever uma origem inesperada.
+    """Persiste o save validado e falha de forma conservadora em conflito.
 
-    Para um save previamente carregado (``expected_sha256`` informado), o novo
-    conteúdo é escrito e validado primeiro. Em seguida, a origem é movida
-    atomicamente para um caminho de rollback/backup e seu hash é conferido já
-    fora do nome original. Só então o temporário é instalado. No Windows,
-    ``os.rename`` falha caso outro processo recrie o destino durante a troca,
-    evitando sobrescrever esse novo arquivo.
+    No Windows, um save previamente carregado é trocado com ``ReplaceFileW``.
+    Essa chamada substitui o destino atomicamente e captura, na mesma operação,
+    os bytes exatos que ocupavam o caminho no instante do commit. O hash dessa
+    cópia é comparado com a origem carregada; se houver divergência, a origem
+    capturada é restaurada e o novo conteúdo é rejeitado.
     """
     target = Path(os.path.abspath(os.fspath(path)))
     target.parent.mkdir(parents=True, exist_ok=True)
     prepared_path, blob_sha256 = _write_verified_temp(target, blob)
     temp_path: Path | None = prepared_path
-    rollback_path: Path | None = None
-    source_moved = False
+    captured_source: Path | None = None
 
     try:
         if expected_sha256 is None:
             backup_path = None
             if backup and target.exists():
-                backup_path = _timestamped_backup_path(target)
+                backup_path = _unique_path(target, "backup", visible_backup=True)
                 shutil.copy2(target, backup_path)
+            # Compatibilidade com a gravação de um novo caminho e com as
+            # regressões históricas de falha de os.replace.
             save_layer.os.replace(temp_path, target)
             temp_path = None
             return str(target), backup_path, blob_sha256
 
         _assert_expected_source(target, expected_sha256)
-        rollback_path = _timestamped_backup_path(target) if backup else _private_rollback_path(target)
-
-        # Retira atomicamente a origem do nome público. A conferência posterior
-        # fecha a janela entre "verificar" e "substituir" existente na 3.3.1.
-        save_layer.os.replace(target, rollback_path)
-        source_moved = True
-
-        moved_hash = file_sha256(rollback_path)
-        if moved_hash != expected_sha256:
-            restored = _restore_original_if_safe(target, rollback_path)
-            source_moved = not restored
-            raise SaveConflictError(
-                "O save mudou durante a gravação e a operação foi cancelada sem instalar o novo conteúdo."
-            )
-
-        if target.exists():
-            raise SaveConflictError(
-                "Outro processo recriou o save durante a gravação. O novo conteúdo não foi instalado."
-            )
-
-        # No Windows, produto suportado, rename não substitui um destino que
-        # reapareça entre a checagem acima e a instalação.
-        os.rename(temp_path, target)
+        captured_source = _unique_path(target, "source", visible_backup=backup)
+        _replace_existing_with_backup(target, temp_path, captured_source)
         temp_path = None
-        source_moved = False
 
-        if not backup and rollback_path.exists():
-            rollback_path.unlink()
-            rollback_path = None
+        try:
+            source_at_commit_sha256 = file_sha256(captured_source)
+        except OSError as exc:
+            raise OSError(
+                f"A substituição ocorreu, mas a cópia de segurança {captured_source.name} não pôde ser validada."
+            ) from exc
 
-        return str(target), rollback_path if backup else None, blob_sha256
-    except Exception as exc:
-        if source_moved and rollback_path is not None and rollback_path.exists():
-            restored = _restore_original_if_safe(target, rollback_path)
-            if not restored and not target.exists():
-                raise OSError(
-                    f"Falha ao concluir a gravação e ao restaurar o original. Cópia de recuperação preservada em {rollback_path.name}."
-                ) from exc
-        raise
+        try:
+            installed_sha256 = file_sha256(target)
+        except OSError as exc:
+            raise OSError(
+                f"A substituição ocorreu, mas o save instalado não pôde ser validado. A origem foi preservada em {captured_source.name}."
+            ) from exc
+
+        if installed_sha256 != blob_sha256:
+            raise SaveConflictError(
+                f"O save instalado foi alterado por outro processo antes da validação final. A origem anterior foi preservada em {captured_source.name}."
+            )
+
+        if source_at_commit_sha256 != expected_sha256:
+            restored = _restore_captured_source(target, captured_source, blob_sha256)
+            if restored:
+                captured_source = None
+                raise SaveConflictError(
+                    "O save mudou durante o commit. A versão externa foi restaurada e as alterações do editor não foram instaladas."
+                )
+            raise OSError(
+                f"Foi detectado conflito durante o commit. A versão substituída permanece preservada em {captured_source.name}; o editor não a apagou."
+            )
+
+        if not backup and captured_source is not None:
+            try:
+                captured_source.unlink()
+                captured_source = None
+            except OSError:
+                # O save novo já foi validado e está instalado; uma falha ao
+                # remover a cópia privada não deve converter sucesso em falha.
+                pass
+
+        return str(target), captured_source if backup else None, blob_sha256
     finally:
         if temp_path is not None and temp_path.exists():
             try:
