@@ -1,0 +1,23 @@
+# Python e compilação
+__pycache__/
+*.py[cod]
+build/
+dist/
+.venv/
+venv/
+
+# Saves, backups e cópias de diagnóstico
+*.es3
+*_dump.json
+player_dump.json
+*_backup_*.es3
+qa_runtime/
+ui_*.png
+
+# Arquivos temporários e editores
+*.tmp
+*.log
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
