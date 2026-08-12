@@ -6,20 +6,20 @@ Data: 12/08/2026
 
 A versão 3.3.1 encerra a auditoria técnica do HollyEditTBH com foco em consistência de distribuição, proteção operacional, integridade do save, inteligência de equipamentos, Mercado Steam, atualização de catálogo, documentação e build Windows.
 
-O candidato final foi validado em Windows Server 2025 com Python 3.12.10 e PyInstaller 6.22.0.
+O candidato foi validado em Windows Server 2025 com Python 3.12.10 e PyInstaller 6.22.0.
 
-Resultado do gate de release:
+Resultado dos gates de release:
 
 - **50/50 testes automatizados aprovados**;
 - `python -m compileall -q .` aprovado;
 - build PyInstaller concluído pela entrada `hollyedittbh_final.py`;
 - `FileVersion` confirmada como **3.3.1**;
 - `HollyEditTBH.exe` iniciado e mantido ativo por 5 segundos no smoke test;
-- executável: **12.504.510 bytes**;
-- SHA-256 do executável: `a7066eacbee9d74f67e1ae09dcade3a7b92605654ff2e4f950849753c82922bc`;
-- artefato ZIP do GitHub Actions: **12.208.817 bytes**;
-- SHA-256 do ZIP do artefato: `91805ebcf9709286b3e4fbe35a965d967b40b99f50df2a854a4d021b32692616`;
-- `SHA256SUMS.txt` publicado no mesmo artefato do executável.
+- `SHA256SUMS.txt` gerado e publicado no mesmo artefato do executável.
+
+### Rastreabilidade do binário
+
+O SHA-256 não é fixado neste relatório porque o executável empacotado pelo PyInstaller não se mostrou reprodutível byte a byte entre execuções equivalentes do CI. A fonte de verdade para cada pacote é o `SHA256SUMS.txt` publicado **no mesmo artefato do commit exato que gerou o executável**. Essa escolha evita registrar no repositório um digest que se torna obsoleto no build seguinte.
 
 ## Escopo auditado
 
@@ -123,11 +123,11 @@ Avisos oficiais do desenvolvedor consultados durante a auditoria:
 - reabertura do Mercado em 25/06/2026: quatro slots de listagem, cooldown de oito horas por slot e restrição temporária para Cósmico, Divino e Celestial, com exceção indicada para Soulstones;
 - atualização de 06/07/2026: o desenvolvedor informou sanções a usuários ligados a itens criados ou obtidos por métodos anormais e declarou que a liberação de negociação dos graus superiores dependeria de estabilidade e anúncio posterior.
 
-A aplicação, portanto, mantém política conservadora quando não existe confirmação oficial posterior de liberação.
+A aplicação mantém política conservadora quando não existe confirmação oficial posterior de liberação.
 
 ## Catálogo de itens
 
-A atualização do catálogo passou a validar antes da substituição do cache:
+A atualização do catálogo valida antes da substituição do cache:
 
 - quantidade mínima plausível;
 - `ItemKey` válido e sem duplicidade;
@@ -136,7 +136,7 @@ A atualização do catálogo passou a validar antes da substituição do cache:
 - proteção contra regressão abrupta em relação ao catálogo anterior;
 - escrita atômica do cache somente após validação.
 
-Uma resposta parcial do site não destrói mais silenciosamente uma base local íntegra.
+Uma resposta parcial do site não destrói silenciosamente uma base local íntegra.
 
 ## Save layer e integridade
 
@@ -241,4 +241,4 @@ Também foram adicionados `permissions: contents: read` e controle de concorrên
 
 Com os gates descritos acima aprovados, não foi identificado defeito crítico conhecido que justifique bloquear a publicação da 3.3.1.
 
-A versão é considerada tecnicamente apta para merge após nova execução verde do CI no commit que contém este próprio relatório. O merge não substitui a necessidade de prudência: edição de saves de jogo conectado pode ser incompatível com regras futuras do desenvolvedor ou da Steam.
+A versão é considerada tecnicamente apta para merge quando o CI do commit final estiver verde. O merge não substitui a necessidade de prudência: edição de saves de jogo conectado pode ser incompatível com regras futuras do desenvolvedor ou da Steam.
