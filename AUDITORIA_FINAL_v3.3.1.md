@@ -230,8 +230,8 @@ O README foi atualizado para refletir a versão 3.3.1, a entrada suportada, todo
 
 O workflow Windows final executa:
 
-1. `actions/checkout@v7.0.1`;
-2. `actions/setup-python@v7.0.0` com Python 3.12;
+1. checkout pelo commit auditado do release `actions/checkout v7.0.1`;
+2. setup pelo commit auditado do release `actions/setup-python v7.0.0` com Python 3.12;
 3. preparação do caminho de teste do Taskbar Hero;
 4. `compileall`;
 5. cinco suítes de regressão, totalizando 55 testes;
@@ -241,9 +241,9 @@ O workflow Windows final executa:
 9. conferência de `FileVersion 3.3.1`;
 10. smoke test do executável por cinco segundos;
 11. geração de SHA-256;
-12. `actions/upload-artifact@v7.0.1` com o executável e `SHA256SUMS.txt`.
+12. upload pelo commit auditado do release `actions/upload-artifact v7.0.1`, com o executável e `SHA256SUMS.txt`.
 
-O workflow roda em pull requests e em `push` para a `main`, evitando a antiga duplicação de gate em push de branch + PR. Também usa `permissions: contents: read` e controle de concorrência para cancelar execuções obsoletas do mesmo ref.
+As Actions externas ficam fixadas aos SHAs dos releases auditados, em vez de depender somente de tags móveis. O workflow roda em pull requests e em `push` para a `main`, evitando a antiga duplicação de gate em push de branch + PR. Também usa `permissions: contents: read` e controle de concorrência para cancelar execuções obsoletas do mesmo ref.
 
 ## Pendências que não bloqueiam a versão
 
