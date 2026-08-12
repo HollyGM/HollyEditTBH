@@ -4,6 +4,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from app_meta import APP_VERSION
 from market_intelligence import (
     MarketQuote,
     MarketSnapshot,
@@ -61,7 +62,7 @@ def fetch_market_snapshot_guarded(
             request = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "HollyEditTBH/3.3.1 (+public Steam Community Market snapshot)",
+                    "User-Agent": f"HollyEditTBH/{APP_VERSION} (+public Steam Community Market snapshot)",
                     "Accept-Language": "en-US,en;q=0.8",
                 },
             )
