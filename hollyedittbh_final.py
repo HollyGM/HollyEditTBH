@@ -11,6 +11,23 @@ import tbh_save_editor as legacy
 from hollyedittbh_next import EnhancedProEditor, MARKET_CACHE_FILE
 from market_intelligence import POLICY_CHECKED_AT
 from market_snapshot_guard import fetch_market_snapshot_guarded
+from save_layer import SaveFile as BaseSaveFile
+
+
+class VerifiedSaveFile(BaseSaveFile):
+    """Mantém o estado de integridade coerente quando a persistência falha."""
+
+    def save(self, path, backup=True):
+        previous_integrity = self.integrity_valid
+        try:
+            return super().save(path, backup=backup)
+        except Exception:
+            self.integrity_valid = previous_integrity
+            raise
+
+
+# O carregamento legado consulta esta referência de módulo em tempo de execução.
+legacy.SaveFile = VerifiedSaveFile
 
 
 class FinalProEditor(EnhancedProEditor):
