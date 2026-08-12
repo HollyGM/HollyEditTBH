@@ -4,7 +4,7 @@ Editor de saves do Taskbar Hero para Windows.
 
 Projeto independente e não oficial: <https://github.com/HollyGM/HollyEditTBH>
 
-Versão atual: **3.1.0**
+Versão atual: **3.2.0**
 
 ## Recursos
 
@@ -17,8 +17,10 @@ Versão atual: **3.1.0**
 - filtros no inventário, armazém, criação, troca e edição de itens;
 - encantamentos limitados a equipamentos, espaços e atributos compatíveis;
 - Assistente Guiado que explica cada tarefa, mostra a análise antes de alterar e separa claramente o que o programa faz e não faz;
+- análise de equipamentos e encantamentos por herói, com substituição de uma indicação ou de todas;
 - otimização automática de um herói ou de todos, sem reutilizar o mesmo item;
-- organização de pré-candidatos ao Mercado em uma aba escolhida do armazém;
+- preenchimento de uma aba escolhida do armazém com candidatos existentes e seguros para análise de Mercado;
+- criação separada de itens desejados para uso local, sem apresentá-los como aceitos pelo Mercado;
 - fila conservadora de reciclagem que preserva a melhor cópia e nunca apaga itens;
 - desbloqueio conservador de tutoriais, heróis, pets, atributos e receitas conhecidas;
 - Modo Protegido que detecta o jogo aberto, mudanças externas do arquivo e limita lotes;
@@ -36,8 +38,8 @@ Versão atual: **3.1.0**
 
 ## O que faz o Assistente Guiado
 
-- **Melhorar os heróis:** compara os equipamentos já existentes e mostra uma prévia das trocas. Não cria itens.
-- **Preparar itens para o Mercado:** seleciona candidatos locais conservadores e, após confirmação, organiza-os em uma aba do armazém. Não envia itens à Steam.
+- **Melhorar os heróis:** compara equipamentos e encantamentos já existentes e permite substituir uma indicação ou aplicar todas. Não cria itens.
+- **Preparar itens para o Mercado:** preenche uma aba escolhida com candidatos locais conservadores ou abre a criação de itens desejados para uso local. Não envia itens à Steam e não trata itens criados como elegíveis.
 - **Separar duplicados para reciclagem:** preserva a melhor cópia e organiza as demais. Não apaga nem converte itens.
 - **Liberar recursos locais:** prepara desbloqueios conhecidos de tutoriais, heróis, pets, atributos e receitas. Não inventa fases e não altera servidor.
 

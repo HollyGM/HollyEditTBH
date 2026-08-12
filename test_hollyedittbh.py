@@ -291,6 +291,64 @@ class DataValidationTests(unittest.TestCase):
         self.assertEqual(player["heroSaveDatas"][0]["equippedItemIds"][0], 22)
         self.assertEqual(player["inventorySaveDatas"][0]["ItemUniqueId"], 21)
 
+    def test_single_equipment_recommendation_can_be_applied(self):
+        database = [
+            {"ItemKey": "300101", "Name": "Espada comum", "Rarity": "COMMON", "Type": "GEAR", "StatTypes": []},
+            {"ItemKey": "300102", "Name": "Espada cósmica", "Rarity": "COSMIC", "Type": "GEAR", "StatTypes": []},
+        ]
+        items = [
+            {"ItemKey": 300101, "UniqueId": 31, "ItemGetSourceType": 5, "IsBlocked": False, "IsChaotic": False, "EnchantData": []},
+            {"ItemKey": 300102, "UniqueId": 32, "ItemGetSourceType": 5, "IsBlocked": False, "IsChaotic": False, "EnchantData": []},
+        ]
+        player = minimal_player()
+        hero = {"heroKey": 101, "equippedItemIds": [31] + [0] * 9}
+        player["itemSaveDatas"] = items
+        player["heroSaveDatas"] = [hero]
+        player["inventorySaveDatas"] = [storage_slot(0, 32)]
+        editor = headless_editor({"account": {}, "player": player}, database)
+
+        recommendations = editor.build_auto_equip_plan(hero)
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(editor.apply_auto_equip_plan(hero, [recommendations[0]]), 1)
+        self.assertEqual(hero["equippedItemIds"][0], 32)
+        self.assertEqual(player["inventorySaveDatas"][0]["ItemUniqueId"], 31)
+
+    def test_market_page_can_be_filled_with_safe_existing_candidates(self):
+        database = [
+            {"ItemKey": "300101", "Name": "Espada Beyond", "Rarity": "BEYOND", "Type": "GEAR", "StatTypes": []},
+            {"ItemKey": "300102", "Name": "Espada Imortal", "Rarity": "IMMORTAL", "Type": "GEAR", "StatTypes": []},
+        ]
+        items = [
+            {"ItemKey": 300101, "UniqueId": 41, "ItemGetSourceType": 5, "IsBlocked": False, "IsChaotic": False, "EnchantData": []},
+            {"ItemKey": 300102, "UniqueId": 42, "ItemGetSourceType": 5, "IsBlocked": False, "IsChaotic": False, "EnchantData": []},
+        ]
+        player = minimal_player()
+        player["itemSaveDatas"] = items
+        player["inventorySaveDatas"] = [storage_slot(0, 41), storage_slot(1, 42)]
+        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        editor = headless_editor({"account": {}, "player": player}, database)
+
+        candidates = editor.market_candidates(7, 66)
+        self.assertEqual({row["item"]["UniqueId"] for row in candidates}, {41, 42})
+        self.assertEqual(editor.apply_storage_queue(candidates, 7), 2)
+        filled = {slot["ItemUniqueId"] for slot in player["stashSaveDatas"] if slot["ItemUniqueId"]}
+        self.assertEqual(filled, {41, 42})
+
+    def test_created_desired_item_stays_out_of_market_candidates(self):
+        database = [{"ItemKey": "300101", "Name": "Espada local", "Rarity": "BEYOND", "Type": "GEAR", "StatTypes": []}]
+        player = minimal_player()
+        player["inventorySaveDatas"] = [storage_slot(0)]
+        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        editor = headless_editor({"account": {}, "player": player}, database)
+        item = editor.new_item(300101, enchanted=False)
+        player["itemSaveDatas"].append(item)
+        editor.items.append(item)
+        editor.items_by_uid[item["UniqueId"]] = item
+        editor.session_created_uids.add(item["UniqueId"])
+        player["inventorySaveDatas"][0]["ItemUniqueId"] = item["UniqueId"]
+
+        self.assertEqual(editor.market_candidates(7, 66), [])
+
     def test_protected_mode_limits_bulk_item_creation(self):
         database = [{"ItemKey": "300101", "Name": "Sword", "Rarity": "COMMON", "Type": "GEAR", "StatTypes": []}]
         player = minimal_player()

@@ -2486,6 +2486,16 @@ class ProEditor:
         chaos = " + caos" if item.get("IsChaotic") else ""
         return f"{self.item_rarity(item) or 'SEM DB'}{chaos} | afinidade {score[2]:.0f} | tiers {score[3]:.0f}"
 
+    def enchant_quality_label(self, item: dict | None, hero: dict) -> str:
+        if not item:
+            return "Sem item"
+        enchants = item.get("EnchantData", [])
+        filled = sum(isinstance(row, dict) and self.enchant_is_filled(row) for row in enchants)
+        score = self.auto_equip_score(item, hero)
+        if not enchants:
+            return "Sem espaços"
+        return f"{filled}/{len(enchants)} ativos · AF {score[2]:.0f} · T{score[3]:.0f}"
+
     def build_auto_equip_plan(self, hero: dict) -> list[dict]:
         if not self.data:
             return []
@@ -2591,6 +2601,7 @@ class ProEditor:
             tree.heading(key, text=label)
             tree.column(key, width=width, anchor="w")
         preview_rows: list[tuple[str, dict]] = []
+        preview_plans: dict[str, dict] = {}
         for plan in plans:
             replacement = plan["replacement"]
             iid = tree.insert(
@@ -2607,23 +2618,43 @@ class ProEditor:
                 ),
             )
             preview_rows.append((iid, replacement))
+            preview_plans[iid] = plan
         tree.pack(fill=BOTH, expand=True, padx=12, pady=8)
 
-        def apply() -> None:
-            applied = self.apply_auto_equip_plan(hero, plans)
-            if applied != len(plans):
+        def apply_rows(selected_plans: list[dict]) -> None:
+            if not selected_plans:
+                return
+            applied = self.apply_auto_equip_plan(hero, selected_plans)
+            if applied != len(selected_plans):
                 messagebox.showerror(APP_NAME, "A origem de algum item mudou. Feche a previa e tente novamente.")
                 return
-            self.selected_item = plans[-1]["replacement"]
+            self.selected_item = selected_plans[-1]["replacement"]
             self.mark_dirty(f"{applied} item(ns) melhor(es) equipado(s) em {hname}.")
             self.refresh_all()
             win.destroy()
             messagebox.showinfo(APP_NAME, f"Equipamento automatico concluido para {hname}.\nTrocas realizadas: {applied}\nUse Salvar para gravar no arquivo.")
 
+        def apply_selected() -> None:
+            selected = tree.selection()
+            if selected and selected[0] in preview_plans:
+                apply_rows([preview_plans[selected[0]]])
+
         buttons = ttk.Frame(win, style="Panel.TFrame", padding=10)
         buttons.pack(fill=X)
         ttk.Button(buttons, text="Cancelar", command=win.destroy).pack(side=LEFT)
-        ttk.Button(buttons, text=f"Aplicar {len(plans)} troca(s)", style="Accent.TButton", command=apply).pack(side=RIGHT)
+        selected_button = ttk.Button(buttons, text="Substituir selecionado", command=apply_selected, state="disabled")
+        selected_button.pack(side=LEFT, padx=6)
+        ttk.Button(
+            buttons,
+            text=f"Substituir todas ({len(plans)})",
+            style="Accent.TButton",
+            command=lambda: apply_rows(plans),
+        ).pack(side=RIGHT)
+        tree.bind(
+            "<<TreeviewSelect>>",
+            lambda _event: selected_button.configure(state="normal" if tree.selection() else "disabled"),
+        )
+        tree.bind("<Double-Button-1>", lambda _event: apply_selected())
 
         def refresh_preview_icons() -> None:
             for iid, replacement in preview_rows:
@@ -2986,11 +3017,13 @@ class ProEditor:
         tabs = ttk.Notebook(win)
         tabs.pack(fill=BOTH, expand=True, padx=14, pady=(0, 10))
         overview = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
+        equipment = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         campaign = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         market = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         recycle = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         protection = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         tabs.add(overview, text="Começar")
+        tabs.add(equipment, text="Equipamentos")
         tabs.add(campaign, text="Desbloqueios")
         tabs.add(market, text="Preparar Mercado")
         tabs.add(recycle, text="Separar reciclagem")
@@ -3024,10 +3057,6 @@ class ProEditor:
             font=("Segoe UI", 9, "bold"),
         ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(3, 7))
 
-        def open_auto_equip_guide() -> None:
-            win.destroy()
-            self.open_auto_equip_all_preview()
-
         def action_card(row: int, column: int, title: str, description: str, limitation: str, button: str, command) -> None:
             card = tk.Frame(overview, bg="#1a2638", bd=1, relief="solid")
             card.grid(row=row, column=column, padx=6, pady=6, sticky="nsew")
@@ -3040,8 +3069,8 @@ class ProEditor:
         action_card(
             2, 0, "Melhorar os heróis",
             "Compara os equipamentos que você já possui e mostra as melhores trocas para cada herói.",
-            "não cria itens e mostra todas as trocas antes de equipar.",
-            "Ver recomendações", open_auto_equip_guide,
+            "não cria itens; você pode substituir uma indicação ou aplicar todas.",
+            "Analisar e substituir", lambda: tabs.select(equipment),
         )
         action_card(
             2, 1, "Preparar itens para o Mercado",
@@ -3068,6 +3097,120 @@ class ProEditor:
             fg="#9fb0c8",
             bg="#111a29",
         ).grid(row=4, column=1, sticky="e", padx=6, pady=(9, 2))
+
+        tk.Label(equipment, text="ANALISAR EQUIPAMENTOS E ENCANTAMENTOS", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        tk.Label(
+            equipment,
+            text="Compare o item equipado com a melhor opção disponível. A raridade vem primeiro; em empate, afinidade, tiers e quantidade de encantamentos decidem.",
+            fg="#c5d1e1", bg="#111a29", wraplength=820, justify="left",
+        ).pack(anchor="w", pady=(5, 8))
+        equipment_heroes = [hero for hero in self.data["player"].get("heroSaveDatas", []) if isinstance(hero, dict)]
+        equipment_hero_labels = [HERO_NAMES.get(safe_int(hero.get("heroKey")), f"Herói {hero.get('heroKey')}") for hero in equipment_heroes]
+        initial_hero_label = equipment_hero_labels[0] if equipment_hero_labels else "Nenhum herói"
+        if self.selected_hero in equipment_heroes:
+            initial_hero_label = HERO_NAMES.get(safe_int(self.selected_hero.get("heroKey")), initial_hero_label)
+        equipment_hero_var = StringVar(value=initial_hero_label)
+        equipment_summary_var = StringVar(value="")
+        equipment_bar = ttk.Frame(equipment, style="Panel.TFrame")
+        equipment_bar.pack(fill=X)
+        ttk.Label(equipment_bar, text="Herói").pack(side=LEFT)
+        equipment_hero_combo = ttk.Combobox(equipment_bar, textvariable=equipment_hero_var, values=equipment_hero_labels, state="readonly", width=20)
+        equipment_hero_combo.pack(side=LEFT, padx=(6, 12))
+        ttk.Label(equipment_bar, textvariable=equipment_summary_var).pack(side=LEFT, padx=8)
+        equipment_tree = ttk.Treeview(
+            equipment,
+            columns=("slot", "current", "current_enchants", "recommended", "recommended_enchants", "origin"),
+            show="headings",
+            height=5,
+        )
+        for key, label, width in [
+            ("slot", "Espaço", 105), ("current", "Equipado", 135), ("current_enchants", "Encantamentos atuais", 165),
+            ("recommended", "Indicação", 135), ("recommended_enchants", "Encantamentos indicados", 165), ("origin", "Origem", 125),
+        ]:
+            equipment_tree.heading(key, text=label)
+            equipment_tree.column(key, width=width, minwidth=80, anchor="w")
+        equipment_tree.pack(fill=BOTH, expand=True, pady=8)
+        equipment_plans: dict[str, dict] = {}
+
+        def equipment_selected_hero() -> dict | None:
+            try:
+                return equipment_heroes[equipment_hero_labels.index(equipment_hero_var.get())]
+            except (ValueError, IndexError):
+                return None
+
+        def analyze_equipment() -> None:
+            equipment_tree.delete(*equipment_tree.get_children())
+            equipment_plans.clear()
+            if any(issue["severity"] == "ERRO" for issue in self.validate_save()):
+                equipment_summary_var.set("O save possui erros. Use Validar e reparar antes de substituir.")
+                equipment_selected_button.configure(state="disabled")
+                equipment_all_button.configure(state="disabled")
+                return
+            hero = equipment_selected_hero()
+            if hero is None:
+                equipment_summary_var.set("Nenhum herói disponível.")
+                equipment_selected_button.configure(state="disabled")
+                equipment_all_button.configure(state="disabled")
+                return
+            plans = self.build_auto_equip_plan(hero)
+            for plan in plans:
+                current = plan.get("current")
+                replacement = plan["replacement"]
+                iid = equipment_tree.insert(
+                    "", END,
+                    values=(
+                        SLOT_NAMES.get(plan["slot_index"], "ESPAÇO"),
+                        self.item_name(current),
+                        self.enchant_quality_label(current, hero),
+                        self.item_name(replacement),
+                        self.enchant_quality_label(replacement, hero),
+                        self.storage_label(plan["source"], plan["source_slot"]),
+                    ),
+                )
+                equipment_plans[iid] = plan
+            equipment_summary_var.set(
+                f"{len(plans)} melhoria(s) encontrada(s)." if plans else "Este herói já usa os melhores itens locais encontrados."
+            )
+            equipment_selected_button.configure(state="disabled")
+            equipment_all_button.configure(state="normal" if plans else "disabled")
+
+        def apply_equipment_rows(plans: list[dict]) -> None:
+            hero = equipment_selected_hero()
+            if hero is None or not plans:
+                return
+            hero_name = HERO_NAMES.get(safe_int(hero.get("heroKey")), "Herói")
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"Substituir {len(plans)} equipamento(s) de {hero_name} pelas indicações?\n\nOs itens atuais voltarão para os espaços de origem. A gravação só ocorre ao usar Salvar alterações.",
+            ):
+                return
+            applied = self.apply_auto_equip_plan(hero, plans)
+            if applied != len(plans):
+                messagebox.showerror(APP_NAME, "A origem de algum item mudou. Analise novamente.")
+                analyze_equipment()
+                return
+            self.selected_item = plans[-1]["replacement"]
+            self.mark_dirty(f"{hero_name}: {applied} equipamento(s) substituído(s) pela indicação.")
+            self.refresh_all()
+            analyze_equipment()
+            messagebox.showinfo(APP_NAME, f"Substituições preparadas: {applied}.\nUse Salvar alterações para gravar.")
+
+        def apply_selected_equipment() -> None:
+            selected = equipment_tree.selection()
+            if selected and selected[0] in equipment_plans:
+                apply_equipment_rows([equipment_plans[selected[0]]])
+
+        equipment_actions = ttk.Frame(equipment, style="Panel.TFrame")
+        equipment_actions.pack(fill=X)
+        ttk.Button(equipment_actions, text="Analisar novamente", command=analyze_equipment).pack(side=LEFT)
+        equipment_selected_button = ttk.Button(equipment_actions, text="Substituir selecionado", command=apply_selected_equipment, state="disabled")
+        equipment_selected_button.pack(side=LEFT, padx=6)
+        equipment_all_button = ttk.Button(equipment_actions, text="Substituir todas as indicações", style="Accent.TButton", command=lambda: apply_equipment_rows(list(equipment_plans.values())), state="disabled")
+        equipment_all_button.pack(side=RIGHT)
+        equipment_tree.bind("<<TreeviewSelect>>", lambda _event: equipment_selected_button.configure(state="normal" if equipment_tree.selection() else "disabled"))
+        equipment_tree.bind("<Double-Button-1>", lambda _event: apply_selected_equipment())
+        equipment_hero_combo.bind("<<ComboboxSelected>>", lambda _event: analyze_equipment())
+        analyze_equipment()
 
         tk.Label(campaign, text="LIBERAR RECURSOS LOCAIS", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         tk.Label(
@@ -3122,7 +3265,7 @@ class ProEditor:
         tk.Label(market, text="PREPARAR ITENS PARA O MERCADO", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
         tk.Label(
             market,
-            text="1. Escolha a aba e analise.  2. Confira a lista.  3. Só então organize os itens. A venda continua sendo feita dentro do jogo.",
+            text="1. Escolha a aba.  2. Preencha com candidatos existentes.  3. Confira e organize. Itens desejados criados pelo editor ficam separados para uso local.",
             fg="#83d5b5", bg="#111a29", justify="left",
         ).pack(anchor="w", pady=(0, 9))
         market_bar = ttk.Frame(market, style="Panel.TFrame")
@@ -3160,8 +3303,9 @@ class ProEditor:
             return max(1, min(STASH_PAGE_COUNT, safe_int(normalize_search_text(var.get()).rsplit(" ", 1)[-1], 1)))
 
         def analyze_market() -> None:
+            page = selected_page(market_page_var)
             market_rows.clear()
-            market_rows.extend(self.market_candidates(selected_page(market_page_var), max(1, safe_int(market_count_var.get(), 20))))
+            market_rows.extend(self.market_candidates(page, max(1, safe_int(market_count_var.get(), 20))))
             market_tree.delete(*market_tree.get_children())
             for row in market_rows:
                 item = row["item"]
@@ -3169,8 +3313,27 @@ class ProEditor:
                     "", END,
                     values=(self.item_name(item), rarity_label(self.item_rarity(item)), item_type_label(self.item_db(item).get("Type")), self.storage_label(row["source"], row["source_slot"]), row["reason"]),
                 )
-            market_summary_var.set(f"{len(market_rows)} pré-candidato(s) seguro(s) para organização local.")
+            free_slots = self.free_slot_count(f"Armazem {page}")
+            missing = max(0, free_slots - len(market_rows))
+            suffix = f" · {missing} espaço(s) sem candidato existente seguro" if missing else " · capacidade disponível atendida"
+            market_summary_var.set(f"{len(market_rows)} pré-candidato(s) seguro(s){suffix}.")
             market_apply.configure(state="normal" if market_rows else "disabled")
+
+        def fill_market_page() -> None:
+            page = selected_page(market_page_var)
+            free_slots = self.free_slot_count(f"Armazem {page}")
+            if not free_slots:
+                messagebox.showinfo(APP_NAME, f"O Armazém {page} não possui espaços livres.")
+                return
+            market_count_var.set(str(min(STASH_PAGE_SIZE, free_slots)))
+            analyze_market()
+
+        def add_desired_market_items() -> None:
+            page = selected_page(market_page_var)
+            if not self.free_slot_count(f"Armazem {page}"):
+                messagebox.showinfo(APP_NAME, f"O Armazém {page} não possui espaços livres.")
+                return
+            self.open_create_item_dialog(f"Armazem {page}", local_market_notice=True)
 
         def apply_market() -> None:
             page = selected_page(market_page_var)
@@ -3190,7 +3353,9 @@ class ProEditor:
             messagebox.showinfo(APP_NAME, f"Organização concluída: {applied} item(ns).\nA confirmação final deve ser feita dentro do jogo.")
             win.destroy()
 
-        ttk.Button(market_actions, text="1. Analisar sem mover", command=analyze_market).pack(side=LEFT)
+        ttk.Button(market_actions, text="Analisar limite", command=analyze_market).pack(side=LEFT)
+        ttk.Button(market_actions, text="Preencher com existentes", command=fill_market_page).pack(side=LEFT, padx=5)
+        ttk.Button(market_actions, text="Adicionar desejados (uso local)", command=add_desired_market_items).pack(side=LEFT)
         market_apply = ttk.Button(market_actions, text="2. Confirmar e organizar", style="Accent.TButton", command=apply_market, state="disabled")
         market_apply.pack(side=RIGHT)
 
@@ -3861,7 +4026,7 @@ class ProEditor:
             return str(item_key)
         return f"{item_key} | {rarity_label(db.get('Rarity', ''))} | {db.get('Name', '')}"
 
-    def open_create_item_dialog(self) -> None:
+    def open_create_item_dialog(self, initial_target: str = "Automatico", local_market_notice: bool = False) -> None:
         if self.data is None:
             messagebox.showinfo(APP_NAME, "Abra um save primeiro.")
             return
@@ -3870,15 +4035,17 @@ class ProEditor:
             return
 
         win = tk.Toplevel(self.root)
-        win.title("Criar item")
+        win.title("Adicionar item desejado — uso local" if local_market_notice else "Criar item")
         win.configure(bg="#0e1420")
-        self.configure_dialog(win, 1080, 680, resizable=True)
-        win.minsize(900, 580)
+        self.configure_dialog(win, 900, 580, resizable=True)
+        win.minsize(820, 520)
 
         query_var = StringVar(value="")
         rarity_var = StringVar(value=RARITY_FILTER_ALL)
         type_var = StringVar(value=ITEM_TYPE_LABELS["GEAR"])
-        target_var = StringVar(value=DESTINATION_LABELS["Automatico"])
+        if initial_target not in DESTINATION_LABELS:
+            initial_target = "Automatico"
+        target_var = StringVar(value=DESTINATION_LABELS[initial_target])
         quantity_var = StringVar(value="1")
         enchant_var = BooleanVar(value=False)
         result_var = StringVar(value="")
@@ -3898,7 +4065,8 @@ class ProEditor:
         type_combo = ttk.Combobox(bar, textvariable=type_var, values=TYPE_FILTER_VALUES, state="readonly", width=16)
         type_combo.grid(row=1, column=3, sticky="ew", padx=(8, 12), pady=(10, 0))
         ttk.Label(bar, text="Destino").grid(row=1, column=4, sticky="w", pady=(10, 0))
-        ttk.Combobox(bar, textvariable=target_var, values=DESTINATION_VALUES, state="readonly", width=16).grid(
+        target_values = [DESTINATION_LABELS[initial_target]] if local_market_notice else DESTINATION_VALUES
+        ttk.Combobox(bar, textvariable=target_var, values=target_values, state="readonly", width=16).grid(
             row=1, column=5, sticky="ew", padx=(8, 12), pady=(10, 0)
         )
         ttk.Label(bar, text="Quantidade").grid(row=1, column=6, sticky="w", pady=(10, 0))
@@ -3909,20 +4077,26 @@ class ProEditor:
         ttk.Label(bar, text="Disponível apenas para equipamentos com espaços de encantamento.").grid(
             row=2, column=4, columnspan=4, sticky="e", pady=(10, 0)
         )
+        if local_market_notice:
+            tk.Label(
+                bar,
+                text="USO LOCAL: itens criados pelo editor não são candidatos confiáveis ao Mercado e podem ser recusados pelo jogo/Steam.",
+                fg="#f5c66a", bg="#111a29", justify="left", wraplength=820,
+            ).grid(row=3, column=0, columnspan=8, sticky="w", pady=(10, 0))
         bar.columnconfigure(1, weight=1)
         bar.columnconfigure(3, weight=1)
         bar.columnconfigure(5, weight=1)
 
         columns = ("key", "name", "rarity", "type", "stats")
-        tree = ttk.Treeview(win, columns=columns, show="tree headings", height=18)
+        tree = ttk.Treeview(win, columns=columns, show="tree headings", height=12)
         tree.heading("#0", text="")
         tree.column("#0", width=44, minwidth=44, stretch=False, anchor="center")
         for col, text, width in [
-            ("key", "Código", 90),
-            ("name", "Nome oficial", 280),
-            ("rarity", "Raridade", 110),
-            ("type", "Tipo", 120),
-            ("stats", "Atributos possíveis", 360),
+            ("key", "Código", 75),
+            ("name", "Nome oficial", 235),
+            ("rarity", "Raridade", 95),
+            ("type", "Tipo", 105),
+            ("stats", "Atributos possíveis", 280),
         ]:
             tree.heading(col, text=text)
             tree.column(col, width=width, anchor="w")
@@ -3987,6 +4161,11 @@ class ProEditor:
                 return
             key = safe_int(tree.item(selected[0], "values")[0])
             quantity = max(1, safe_int(quantity_var.get(), 1))
+            if local_market_notice and not messagebox.askyesno(
+                APP_NAME,
+                "Adicionar estes itens ao armazém para uso local?\n\nEles serão marcados como criados nesta sessão e ficarão fora da análise de candidatos ao Mercado.",
+            ):
+                return
             created = self.create_item(key, quantity, destination_value(target_var.get()), enchant_var.get())
             if created:
                 win.destroy()
@@ -3994,7 +4173,7 @@ class ProEditor:
         buttons = ttk.Frame(win, style="Panel.TFrame", padding=8)
         buttons.pack(side="bottom", fill=X)
         ttk.Button(buttons, text="Cancelar", command=win.destroy).pack(side=LEFT)
-        ttk.Button(buttons, text="Criar", style="Accent.TButton", command=create_selected).pack(side=RIGHT)
+        ttk.Button(buttons, text="Adicionar para uso local" if local_market_notice else "Criar", style="Accent.TButton", command=create_selected).pack(side=RIGHT)
         tree.pack(fill=BOTH, expand=True, padx=10, pady=10)
 
         search.bind("<KeyRelease>", schedule_refresh)
