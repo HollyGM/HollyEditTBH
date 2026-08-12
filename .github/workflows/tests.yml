@@ -1,0 +1,60 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+  pull_request:
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare Taskbar Hero test path
+        shell: pwsh
+        run: |
+          $gameDir = Join-Path $HOME 'AppData\LocalLow\TesseractStudio\TaskbarHero'
+          New-Item -ItemType Directory -Force -Path $gameDir | Out-Null
+          New-Item -ItemType File -Force -Path (Join-Path $gameDir 'SaveFile_Live.es3') | Out-Null
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run regression suite
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py
+      - name: Install PyInstaller
+        run: python -m pip install --disable-pip-version-check pyinstaller
+      - name: Build Windows executable
+        run: pyinstaller --clean --noconfirm HollyEditTBH.spec
+      - name: Verify executable metadata
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist\HollyEditTBH.exe'
+          if (!(Test-Path $exe)) { throw 'HollyEditTBH.exe não foi gerado' }
+          $item = Get-Item $exe
+          $version = $item.VersionInfo.FileVersion
+          Write-Host "Executável gerado: $($item.Length) bytes · versão $version"
+          if ($version -notlike '3.3.0*') { throw "FileVersion inesperada: $version" }
+      - name: Smoke test Windows executable
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist\HollyEditTBH.exe'
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 5
+          $process.Refresh()
+          if ($process.HasExited) { throw "HollyEditTBH.exe encerrou durante o smoke test com código $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          Write-Host 'Startup do HollyEditTBH.exe validado por 5 segundos.'
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: HollyEditTBH-v3.3.0-windows
+          path: dist/HollyEditTBH.exe
+          if-no-files-found: error
+          retention-days: 14

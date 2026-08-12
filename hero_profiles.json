@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "profile_revision": "2026-08-12",
+  "source": "heuristic_role_profiles_informed_by_public_build_guidance",
+  "notice": "Perfis equilibrados, heurísticos e calibráveis. Servem como baseline por função; não representam tier list oficial nem substituem ajustes para farm, chefe ou composição específica.",
+  "default_unprofiled_weight": 0.85,
+  "heroes": {
+    "101": {
+      "name": "Cavaleiro",
+      "role": "linha de frente / sobrevivência",
+      "priorities": ["vida máxima", "armadura", "bloqueio", "redução de dano"],
+      "weights": {"1": 1.2, "3": 1.5, "4": 1.15, "5": 1.55, "11": 1.2, "12": 1.5, "14": 1.4, "15": 1.3}
+    },
+    "201": {
+      "name": "Arqueira",
+      "role": "DPS à distância / velocidade e crítico",
+      "priorities": ["velocidade de ataque", "chance de crítico", "dano de projétil", "esquiva"],
+      "weights": {"1": 1.45, "2": 1.55, "8": 1.4, "10": 1.5, "13": 1.2, "20": 1.3, "24": 1.35, "25": 1.25}
+    },
+    "301": {
+      "name": "Feiticeiro",
+      "role": "DPS mágico / área e recarga",
+      "priorities": ["velocidade de conjuração", "redução de recarga", "área de efeito", "nível de habilidades"],
+      "weights": {"1": 1.35, "7": 1.5, "8": 1.25, "9": 1.55, "10": 1.2, "19": 1.5, "21": 1.2, "28": 1.45}
+    },
+    "401": {
+      "name": "Sacerdotisa",
+      "role": "suporte / cura e disponibilidade de habilidades",
+      "priorities": ["cura de habilidade", "redução de recarga", "vida máxima", "velocidade de conjuração"],
+      "weights": {"3": 1.35, "7": 1.45, "9": 1.55, "15": 1.25, "22": 1.75, "23": 1.35, "28": 1.45}
+    },
+    "501": {
+      "name": "Caçador",
+      "role": "DPS à distância / burst e crítico",
+      "priorities": ["chance de crítico", "dano crítico", "dano de projétil", "redução de recarga", "velocidade de ataque"],
+      "weights": {"1": 1.45, "2": 1.4, "8": 1.5, "9": 1.3, "10": 1.5, "20": 1.15, "24": 1.55, "25": 1.35}
+    },
+    "601": {
+      "name": "Matador",
+      "role": "DPS corpo a corpo / vida, burst e sustentação",
+      "priorities": ["dano de ataque", "vida máxima", "roubo de vida", "vida por abate", "área de efeito"],
+      "weights": {"1": 1.5, "2": 1.15, "3": 1.5, "5": 1.15, "8": 1.3, "10": 1.25, "16": 1.45, "18": 1.35, "19": 1.2, "20": 1.1}
+    }
+  }
+}

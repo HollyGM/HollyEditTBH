@@ -5,10 +5,11 @@ datas = [
     ('tbh_items_cache.json', '.'),
     ('tbh_item_icons', 'tbh_item_icons'),
     ('hero_portraits', 'hero_portraits'),
+    ('hero_profiles.json', '.'),
 ]
 
 a = Analysis(
-    ['tbh_save_editor.py'],
+    ['hollyedittbh_next.py'],
     pathex=[],
     binaries=[],
     datas=datas,
