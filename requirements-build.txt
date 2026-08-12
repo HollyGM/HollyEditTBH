@@ -1,2 +1,9 @@
-# Ferramenta de empacotamento auditada no Windows CI da série 3.3.x.
+# Toolchain resolvida e validada no Windows CI da série 3.3.x.
+# Manter versões explícitas evita deriva silenciosa entre builds.
 pyinstaller==6.22.0
+pyinstaller-hooks-contrib==2026.6
+altgraph==0.17.5
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+packaging==26.2
+setuptools==84.0.0
