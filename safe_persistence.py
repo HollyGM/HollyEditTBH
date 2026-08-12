@@ -1,3 +1,11 @@
+"""Persistência reforçada para o produto Windows.
+
+O caminho suportado usa ReplaceFileW. O fallback não-Windows existe apenas para
+desenvolvimento e não oferece a mesma captura do conteúdo substituído em uma
+única chamada: uma escrita externa entre ``copy2`` e ``os.replace`` pode escapar
+dessa proteção. Os gates de release e as garantias descritas para a 3.3.2 são
+validados no Windows CI.
+"""
 from __future__ import annotations
 
 import ctypes
