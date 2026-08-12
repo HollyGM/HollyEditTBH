@@ -1,3 +1,5 @@
+import os
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -106,6 +108,21 @@ class ProtectedModeFinalTests(unittest.TestCase):
         self.assertEqual(editor.free_slot_count("Armazem 7"), 4)
         self.assertIsNone(editor._market_summary_capacity)
         self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+
+    def test_file_signature_detects_same_size_same_timestamp_content_change(self):
+        editor = final_headless()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "SaveFile_Live.es3"
+            path.write_bytes(b"AAAA")
+            stat = path.stat()
+            before = editor.file_signature(path)
+            path.write_bytes(b"BBBB")
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            after = editor.file_signature(path)
+        self.assertIsNotNone(before)
+        self.assertIsNotNone(after)
+        self.assertEqual(before[:2], after[:2])
+        self.assertNotEqual(before, after)
 
 
 class MarketSnapshotGuardTests(unittest.TestCase):
