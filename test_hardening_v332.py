@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -144,7 +145,7 @@ class TransactionalSaveTests(unittest.TestCase):
                 restored, recovery = safe_persistence._restore_captured_source(
                     path,
                     captured,
-                    safe_persistence.file_sha256_bytes(editor_blob) if hasattr(safe_persistence, "file_sha256_bytes") else __import__("hashlib").sha256(editor_blob).hexdigest(),
+                    hashlib.sha256(editor_blob).hexdigest(),
                 )
 
             self.assertFalse(restored)
