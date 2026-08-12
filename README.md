@@ -115,7 +115,7 @@ A entrada suportada da versão final é:
 py -3.12 hollyedittbh_final.py
 ```
 
-`hollyedittbh_next.py` contém a camada de inteligência 3.3.x e `tbh_save_editor.py` permanece como núcleo legado de compatibilidade reutilizado internamente. A execução direta do núcleo legado não é a entrada suportada de distribuição.
+`hollyedittbh_next.py` contém a camada de inteligência 3.3.x. O núcleo histórico foi isolado em `legacy_editor.py` e é reutilizado internamente. `tbh_save_editor.py` funciona apenas como ponte de compatibilidade: quando importado, resolve para o núcleo legado; quando executado diretamente, redireciona para a entrada final. Assim, a execução direta não inicia mais uma versão antiga da aplicação.
 
 ## Testes
 
