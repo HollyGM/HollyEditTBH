@@ -87,6 +87,26 @@ class ProtectedModeFinalTests(unittest.TestCase):
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
             self.assertEqual(editor.market_round_capacity(7), 4)
 
+    def test_market_fill_context_caps_inherited_free_slot_count(self):
+        player = minimal_player()
+        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        editor = final_headless({"account": {}, "player": player}, [])
+
+        def fill_market_page():
+            return editor.free_slot_count("Armazem 7")
+
+        with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
+            self.assertEqual(fill_market_page(), 4)
+
+    def test_market_summary_capacity_is_consumed_once(self):
+        player = minimal_player()
+        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        editor = final_headless({"account": {}, "player": player}, [])
+        editor._market_summary_capacity = ("Armazem 7", 4)
+        self.assertEqual(editor.free_slot_count("Armazem 7"), 4)
+        self.assertIsNone(editor._market_summary_capacity)
+        self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+
 
 class MarketSnapshotGuardTests(unittest.TestCase):
     @staticmethod
@@ -101,6 +121,11 @@ class MarketSnapshotGuardTests(unittest.TestCase):
     def test_partial_regression_does_not_replace_better_cache(self):
         cached = self.snapshot(100, complete=True)
         partial = self.snapshot(20, complete=False)
+        self.assertIs(prefer_snapshot(cached, partial), cached)
+
+    def test_complete_cache_beats_larger_partial_candidate(self):
+        cached = self.snapshot(100, complete=True)
+        partial = self.snapshot(150, complete=False)
         self.assertIs(prefer_snapshot(cached, partial), cached)
 
     def test_complete_snapshot_replaces_cache(self):
