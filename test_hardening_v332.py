@@ -67,7 +67,7 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "external")
             self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
 
-    def test_race_at_atomic_commit_is_detected_and_external_source_is_restored(self):
+    def test_race_at_commit_is_detected_and_external_source_is_restored(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "SaveFile_Live.es3"
             path.write_bytes(save_bytes("loaded"))
@@ -93,7 +93,7 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "race-winner")
             self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
 
-    def test_atomic_replace_failure_keeps_original_source(self):
+    def test_replace_failure_keeps_original_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "SaveFile_Live.es3"
             original = save_bytes("original")
@@ -108,6 +108,18 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), original)
             self.assertEqual(BaseSaveFile.load(path).player["marker"], "original")
             self.assertFalse(any(path.parent.glob(".tbh-save-*.tmp")))
+
+    def test_failed_replace_partial_state_restores_missing_target_from_backup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "SaveFile_Live.es3"
+            backup = Path(temp_dir) / "SaveFile_Live_backup.es3"
+            original = save_bytes("original")
+            backup.write_bytes(original)
+
+            self.assertFalse(path.exists())
+            self.assertTrue(safe_persistence._recover_failed_windows_replace(path, backup))
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse(backup.exists())
 
     def test_successful_saves_refresh_origin_fingerprint_and_backup_exact_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
