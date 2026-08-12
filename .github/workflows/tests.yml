@@ -23,7 +23,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.10'
       - name: Prepare Taskbar Hero test path
         shell: pwsh
         run: |
@@ -33,7 +33,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
-        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py
       - name: Smoke test compatibility source entry
         shell: pwsh
         run: |
@@ -43,8 +43,8 @@ jobs:
           if ($process.HasExited) { throw "tbh_save_editor.py encerrou durante o smoke test com código $($process.ExitCode)" }
           Stop-Process -Id $process.Id -Force
           Write-Host 'Entrada de compatibilidade redirecionou e permaneceu ativa por 3 segundos.'
-      - name: Install PyInstaller
-        run: python -m pip install --disable-pip-version-check pyinstaller
+      - name: Install pinned PyInstaller
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
       - name: Build Windows executable
         run: pyinstaller --clean --noconfirm HollyEditTBH.spec
       - name: Verify executable metadata
@@ -53,9 +53,12 @@ jobs:
           $exe = Join-Path $PWD 'dist\HollyEditTBH.exe'
           if (!(Test-Path $exe)) { throw 'HollyEditTBH.exe não foi gerado' }
           $item = Get-Item $exe
-          $version = $item.VersionInfo.FileVersion
-          Write-Host "Executável gerado: $($item.Length) bytes · versão $version"
-          if ($version -notlike '3.3.1*') { throw "FileVersion inesperada: $version" }
+          $fileVersion = ([string]$item.VersionInfo.FileVersion).Trim()
+          $productVersion = ([string]$item.VersionInfo.ProductVersion).Trim()
+          $allowedVersions = @('3.3.2', '3.3.2.0')
+          Write-Host "Executável gerado: $($item.Length) bytes · FileVersion $fileVersion · ProductVersion $productVersion"
+          if ($allowedVersions -notcontains $fileVersion) { throw "FileVersion inesperada: $fileVersion" }
+          if ($allowedVersions -notcontains $productVersion) { throw "ProductVersion inesperada: $productVersion" }
       - name: Smoke test Windows executable
         shell: pwsh
         run: |
@@ -73,10 +76,21 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
           "$hash  HollyEditTBH.exe" | Set-Content -Encoding ascii (Join-Path $PWD 'dist\SHA256SUMS.txt')
           Write-Host "SHA-256: $hash"
+      - name: Verify distribution contents
+        shell: pwsh
+        run: |
+          $actual = @(Get-ChildItem (Join-Path $PWD 'dist') -File | ForEach-Object Name | Sort-Object)
+          $expected = @('HollyEditTBH.exe', 'SHA256SUMS.txt') | Sort-Object
+          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($difference.Count -ne 0) {
+            Write-Host 'Conteúdo inesperado em dist:'
+            $actual | ForEach-Object { Write-Host " - $_" }
+            throw 'O pacote contém arquivo ausente ou não autorizado.'
+          }
       - name: Upload Windows package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.3.1-windows
+          name: HollyEditTBH-v3.3.2-windows
           path: |
             dist/HollyEditTBH.exe
             dist/SHA256SUMS.txt
