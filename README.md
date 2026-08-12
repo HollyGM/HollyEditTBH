@@ -70,7 +70,8 @@ O Modo Protegido permanece ativo por padrão e mantém todas as barreiras da 3.3
 - bloqueia salvamento enquanto o Taskbar Hero estiver aberto;
 - bloqueia salvamento quando o conteúdo do arquivo mudou no disco depois de ser carregado;
 - na 3.3.2, também bloqueia se a assinatura inicial do save não puder ser obtida;
-- na 3.3.2, falha/timeout/retorno inválido do `tasklist` é tratado conservadoramente como estado inseguro, em vez de presumir que o jogo está fechado.
+- na 3.3.2, falha/timeout/retorno inválido do `tasklist` é tratado conservadoramente como estado inseguro, em vez de presumir que o jogo está fechado;
+- a detecção executa `%SystemRoot%\System32\tasklist.exe` por caminho absoluto, evitando resolução pelo diretório da aplicação ou pelo `PATH`, e usa decodificação tolerante sem afetar a comparação ASCII do processo.
 
 A criação e duplicação local continuam disponíveis somente após desativação consciente do Modo Protegido. Isso não transforma a operação em segura ou aceita pelo jogo.
 
@@ -108,7 +109,7 @@ Executar a mesma suíte usada pelo CI:
 py -3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py
 ```
 
-A suíte proposta contém **68 testes automatizados**: os 55 do baseline 3.3.1 mais 13 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, concorrência durante rollback sem perda da versão mais nova, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível e falhas de detecção do processo do jogo.
+A suíte proposta contém **69 testes automatizados**: os 55 do baseline 3.3.1 mais 14 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, concorrência durante rollback sem perda da versão mais nova, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível, falhas de detecção do processo e resolução segura de `tasklist.exe`.
 
 O CI também executa:
 
@@ -116,7 +117,7 @@ O CI também executa:
 - smoke test de 3 segundos da ponte `tbh_save_editor.py`;
 - instalação da toolchain fixada em `requirements-build.txt`;
 - build pelo PyInstaller;
-- conferência de `FileVersion 3.3.2`;
+- conferência exata de `FileVersion` e `ProductVersion` 3.3.2/3.3.2.0;
 - inicialização real do `.exe` por 5 segundos;
 - geração de `SHA256SUMS.txt`;
 - validação de que `dist` contém somente `HollyEditTBH.exe` e `SHA256SUMS.txt`;
