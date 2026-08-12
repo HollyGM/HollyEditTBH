@@ -118,6 +118,11 @@ class DistributionFinalTests(unittest.TestCase):
         spec = (Path(__file__).resolve().parent / "HollyEditTBH.spec").read_text(encoding="utf-8")
         self.assertIn("['hollyedittbh_final.py']", spec)
 
+    def test_tbh_save_editor_import_resolves_legacy_core(self):
+        import tbh_save_editor
+
+        self.assertEqual(Path(tbh_save_editor.__file__).name, "legacy_editor.py")
+
 
 if __name__ == "__main__":
     unittest.main()
