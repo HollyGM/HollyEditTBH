@@ -258,21 +258,27 @@ def quote_for_item(snapshot: MarketSnapshot | None, item_name: str, rarity: str)
 
 
 def market_priority(quote: MarketQuote | None, *, rarity_rank: int, item_type: str, has_enchantments: bool) -> tuple[float, ...]:
-    """Ranking signal, not a sale-price promise. Enchantments never increase sale priority."""
+    """Ranking signal, not a sale-price or liquidity promise.
+
+    The visible listing count is retained in MarketQuote for context only. It is
+    deliberately excluded from the ranking because more active listings can mean
+    either demand or simply more competing supply; without sales-volume history,
+    treating it as liquidity would be an unsupported inference.
+    """
+    material_bonus = 1.0 if str(item_type).upper() == "MATERIAL" else 0.0
+    enchant_penalty = -1.0 if has_enchantments else 0.0
     if quote:
         return (
             1.0,
             float(quote.price_value),
-            float(min(quote.sell_listings, 10_000)),
-            1.0 if str(item_type).upper() == "MATERIAL" else 0.0,
-            -1.0 if has_enchantments else 0.0,
+            material_bonus,
+            enchant_penalty,
             float(rarity_rank),
         )
     return (
         0.0,
         0.0,
-        0.0,
-        1.0 if str(item_type).upper() == "MATERIAL" else 0.0,
-        -1.0 if has_enchantments else 0.0,
+        material_bonus,
+        enchant_penalty,
         float(rarity_rank),
     )
