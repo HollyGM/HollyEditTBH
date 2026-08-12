@@ -74,6 +74,25 @@ def _assert_expected_source(path: Path, expected_sha256: str) -> None:
         )
 
 
+def _recover_failed_windows_replace(target: Path, backup_path: Path) -> bool:
+    """Restaura o nome principal sem sobrescrever um arquivo que tenha reaparecido.
+
+    A documentação de ReplaceFileW prevê uma falha em que o arquivo substituído
+    já foi movido para ``lpBackupFileName``. Nesse estado, o caminho principal
+    pode ficar ausente. No Windows, ``os.rename`` não substitui um destino
+    existente, então uma recriação concorrente do target não é apagada.
+    """
+    if target.exists():
+        return True
+    if not backup_path.exists():
+        return False
+    try:
+        os.rename(backup_path, target)
+        return True
+    except OSError:
+        return target.exists()
+
+
 def _windows_replace_with_backup(target: Path, replacement: Path, backup_path: Path) -> None:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     replace_file = kernel32.ReplaceFileW
@@ -88,19 +107,28 @@ def _windows_replace_with_backup(target: Path, replacement: Path, backup_path: P
     replace_file.restype = ctypes.c_int
     ctypes.set_last_error(0)
     success = replace_file(str(target), str(replacement), str(backup_path), 0, None, None)
-    if not success:
-        error = ctypes.get_last_error()
-        raise OSError(error, ctypes.FormatError(error), str(target))
+    if success:
+        return
+
+    error = ctypes.get_last_error()
+    safe_path_state = _recover_failed_windows_replace(target, backup_path)
+    message = ctypes.FormatError(error).strip() or "ReplaceFileW falhou"
+    if not safe_path_state:
+        if backup_path.exists():
+            message += f"; o original permanece preservado em {backup_path.name}"
+        else:
+            message += "; o caminho principal não pôde ser restaurado automaticamente"
+    raise OSError(error, message, str(target))
 
 
 def _replace_existing_with_backup(target: Path, replacement: Path, backup_path: Path) -> None:
-    """Substitui target e captura exatamente o conteúdo substituído em backup_path."""
+    """Substitui target em uma chamada nativa e captura o conteúdo substituído."""
     if os.name == "nt":
         _windows_replace_with_backup(target, replacement, backup_path)
         return
 
-    # Fallback de desenvolvimento fora do Windows. O produto suportado e o CI de
-    # release usam ReplaceFileW, que oferece a garantia atômica descrita acima.
+    # Fallback apenas para desenvolvimento fora do Windows. O produto e o CI de
+    # release exercitam ReplaceFileW e seus estados de recuperação no Windows.
     shutil.copy2(target, backup_path)
     save_layer.os.replace(replacement, target)
 
@@ -141,10 +169,10 @@ def write_save_transactionally(
     """Persiste o save validado e falha de forma conservadora em conflito.
 
     No Windows, um save previamente carregado é trocado com ``ReplaceFileW``.
-    Essa chamada substitui o destino atomicamente e captura, na mesma operação,
-    os bytes exatos que ocupavam o caminho no instante do commit. O hash dessa
-    cópia é comparado com a origem carregada; se houver divergência, a origem
-    capturada é restaurada e o novo conteúdo é rejeitado.
+    A API combina as etapas de substituição em uma única função e pode capturar,
+    no mesmo procedimento, os bytes que ocupavam o caminho no momento do
+    commit. O hash dessa cópia é comparado com a origem carregada; divergência
+    provoca rejeição do novo conteúdo e tentativa segura de restauração.
     """
     target = Path(os.path.abspath(os.fspath(path)))
     target.parent.mkdir(parents=True, exist_ok=True)
