@@ -19,6 +19,7 @@ A auditoria histórica da 3.3.1 permanece em `AUDITORIA_FINAL_v3.3.1.md` e conti
 - prepara o novo save em arquivo temporário no mesmo diretório, executa `flush` + `fsync` e valida SHA-256 antes do commit;
 - no Windows, usa `ReplaceFileW` para combinar em uma única chamada nativa a substituição e a captura do conteúdo anterior;
 - trata os estados de falha documentados de `ReplaceFileW` e tenta restaurar o caminho principal sem sobrescrever um arquivo concorrente que tenha reaparecido;
+- durante rollback, só descarta o arquivo substituído se o SHA-256 provar que ele é o blob gerado pelo editor; uma segunda versão concorrente é preservada para recuperação;
 - rejeita e restaura uma versão externa quando o conteúdo substituído não corresponde ao SHA-256 da origem carregada;
 - abre, edita e exporta dumps JSON pela interface validada;
 - interface em português do Brasil, com contraste, raridade visual e fluxo guiado;
@@ -53,6 +54,7 @@ Na 3.3.2, `VerifiedSaveFile` registra o SHA-256 dos bytes exatos carregados. Ant
 - se divergir, a versão externa capturada é restaurada e o novo blob é rejeitado;
 - se a troca falhar antes de alterar o caminho, o original permanece no lugar;
 - se `ReplaceFileW` retornar um estado documentado em que o original já foi movido para o backup e o caminho principal ficou ausente, a camada tenta restaurar o original sem substituir qualquer arquivo que tenha reaparecido;
+- se outra gravação externa ocorrer durante a tentativa de rollback, essa segunda versão é capturada, validada como conteúdo não pertencente ao editor e preservada em arquivo de recuperação em vez de ser apagada;
 - se ocorrer uma condição excepcional após a troca e a restauração automática não puder ser confirmada, a cópia capturada é preservada e não é apagada silenciosamente.
 
 O produto suportado é Windows. Fora do Windows existe apenas um fallback para desenvolvimento; os gates de release e as garantias de recuperação são validados no runner Windows.
@@ -106,7 +108,7 @@ Executar a mesma suíte usada pelo CI:
 py -3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py
 ```
 
-A suíte proposta contém **67 testes automatizados**: os 55 do baseline 3.3.1 mais 12 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível e falhas de detecção do processo do jogo.
+A suíte proposta contém **68 testes automatizados**: os 55 do baseline 3.3.1 mais 13 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, concorrência durante rollback sem perda da versão mais nova, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível e falhas de detecção do processo do jogo.
 
 O CI também executa:
 
