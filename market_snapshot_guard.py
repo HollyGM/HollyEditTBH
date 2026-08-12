@@ -18,13 +18,16 @@ from market_intelligence import (
 
 
 def prefer_snapshot(cached: MarketSnapshot | None, candidate: MarketSnapshot) -> MarketSnapshot:
-    """Preserva um snapshot anterior quando a nova coleta parece truncada.
+    """Preserva a fonte mais confiável quando a nova coleta parece truncada.
 
-    Respostas incompletas ainda podem ser usadas quando não há cache, mas nunca
-    substituem silenciosamente um cache mais completo já existente.
+    Um snapshot completo já armazenado sempre prevalece sobre uma coleta nova
+    incompleta. Entre dois snapshots incompletos, usa-se temporariamente o que
+    contém mais cotações, sem persistir a resposta parcial sobre o cache.
     """
     if candidate.complete:
         return candidate
+    if cached and cached.complete:
+        return cached
     if cached and len(cached.quotes) >= len(candidate.quotes):
         return cached
     return candidate
