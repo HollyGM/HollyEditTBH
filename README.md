@@ -137,7 +137,7 @@ O gate final contém **55 testes automatizados**. O CI também executa:
 - geração de `SHA256SUMS.txt`;
 - publicação de `HollyEditTBH.exe` e checksum no mesmo artefato.
 
-O workflow usa `actions/checkout@v7.0.1`, `actions/setup-python@v7.0.0` e `actions/upload-artifact@v7.0.1`, roda em pull requests e após integração na `main`, e evita gates duplicados de push de branch + PR.
+O workflow usa os commits exatos auditados dos releases `actions/checkout v7.0.1`, `actions/setup-python v7.0.0` e `actions/upload-artifact v7.0.1`, roda em pull requests e após integração na `main`, e evita gates duplicados de push de branch + PR.
 
 ## Gerar o executável
 
