@@ -6,20 +6,13 @@ import json
 import os
 from pathlib import Path
 import queue
-import sys
 import threading
 import time
-import tkinter as tk
 from tkinter import Tk
 
 import tbh_save_editor as legacy
 from catalog_update import safe_download_catalog
-from intelligence_engine import (
-    SLOT_NAMES as INTELLIGENCE_SLOT_NAMES,
-    optimal_unique_assignment,
-    score_item,
-    slot_prefixes as intelligence_slot_prefixes,
-)
+from intelligence_engine import optimal_unique_assignment, score_item
 from market_intelligence import (
     BASE_LISTING_SLOTS,
     fetch_market_snapshot,
@@ -29,69 +22,10 @@ from market_intelligence import (
     quote_for_item,
 )
 
-legacy.SLOT_NAMES.update(INTELLIGENCE_SLOT_NAMES)
-
 PROFILE_FILE = legacy.RESOURCE_DIR / "hero_profiles.json"
 MARKET_CACHE_FILE = legacy.USER_DATA_DIR / "steam_market_snapshot.json"
 
-THEME = {
-    "base": "#08111F",
-    "top": "#0F1B2D",
-    "panel": "#111F33",
-    "card": "#172A43",
-    "selected": "#1D3C5F",
-    "input": "#0B1728",
-    "border": "#2B4566",
-    "text": "#F4F7FB",
-    "muted": "#A9B8CC",
-    "muted2": "#7F93AD",
-    "accent": "#53D6C5",
-    "accent_text": "#061712",
-    "selection": "#2F6FED",
-    "danger": "#FF8C82",
-    "success": "#77D6AE",
-}
-
-LEGACY_COLOR_MAP = {
-    "#0e1420": THEME["base"],
-    "#0e1624": THEME["input"],
-    "#111a29": THEME["panel"],
-    "#141722": THEME["input"],
-    "#151e2c": THEME["input"],
-    "#172033": THEME["top"],
-    "#172438": THEME["card"],
-    "#17243a": THEME["card"],
-    "#181c29": THEME["base"],
-    "#1a2638": THEME["card"],
-    "#1c2940": THEME["card"],
-    "#1d2231": THEME["card"],
-    "#202638": THEME["card"],
-    "#20314a": THEME["selected"],
-    "#203a59": THEME["selected"],
-    "#222838": THEME["card"],
-    "#263a58": THEME["selected"],
-    "#293b58": THEME["selected"],
-    "#2a3144": THEME["selected"],
-    "#2c3a51": THEME["border"],
-    "#2c3d57": THEME["border"],
-    "#33445f": THEME["border"],
-    "#34405a": THEME["border"],
-    "#f5b84b": THEME["accent"],
-    "#ffb84d": THEME["accent"],
-    "#ffffff": THEME["text"],
-    "#e6edf7": THEME["text"],
-    "#dbe7f7": THEME["text"],
-    "#d7e5f7": THEME["text"],
-    "#cbd7e6": THEME["muted"],
-    "#c5d1e1": THEME["muted"],
-    "#b5c4d8": THEME["muted"],
-    "#9fb0c8": THEME["muted"],
-    "#7f91aa": THEME["muted2"],
-    "#6f7d95": THEME["muted2"],
-    "#64748b": THEME["muted2"],
-    "#83d5b5": THEME["success"],
-    "#ffb4a9": THEME["danger"],
-}
+THEME = legacy.THEME
 
 RARITY_FOREGROUNDS = {
     "COMMON": "#B6C2D2",
@@ -105,18 +39,6 @@ RARITY_FOREGROUNDS = {
     "DIVINE": "#FFB86B",
     "COSMIC": "#FFF1C7",
 }
-
-TEXT_REPLACEMENTS = {
-    "Assistente guiado": "Inteligência",
-    "ASSISTENTE GUIADO": "CENTRAL DE INTELIGÊNCIA",
-    "A raridade tem prioridade; em empate entram caos, afinidade dos atributos e tiers dos encantamentos.":
-        "A nota combina raridade, nível conhecido, afinidade e tiers dos encantamentos; a prévia mostra a decisão antes de aplicar.",
-    "Cada item é usado uma única vez. A raridade tem prioridade e os encantamentos entram no desempate.":
-        "Alocação global exata: cada item é usado uma única vez e nenhum herói é rebaixado para beneficiar outro.",
-    "Compare o item equipado com a melhor opção disponível. A raridade vem primeiro; em empate, afinidade, tiers e quantidade de encantamentos decidem.":
-        "Compare o item equipado com a melhor opção disponível. A nota combina raridade, nível conhecido, afinidade, tiers e ocupação dos encantamentos.",
-}
-
 
 def _load_profiles() -> dict:
     try:
@@ -138,87 +60,15 @@ def _version_tuple(value: object) -> tuple[int, ...]:
 
 class EnhancedProEditor(legacy.ProEditor):
     def __init__(self, root: Tk) -> None:
-        self.theme = dict(THEME)
         self.hero_profiles = _load_profiles()
         self.market_snapshot = load_market_snapshot(MARKET_CACHE_FILE)
         self.intel_jobs: queue.Queue = queue.Queue()
         self._last_catalog_auto_refresh = 0.0
         self._last_market_auto_refresh = 0.0
         super().__init__(root)
-        self._install_runtime_theme()
         self._configure_rarity_tags()
         self.root.after(350, self._poll_intelligence_jobs)
         self.root.after(1200, self.refresh_intelligence_sources)
-
-    def setup_style(self) -> None:
-        self.root.configure(bg=self.theme["base"])
-        style = legacy.ttk.Style()
-        style.theme_use("clam")
-        style.configure(".", background=self.theme["base"], foreground=self.theme["text"], fieldbackground=self.theme["top"], bordercolor=self.theme["border"])
-        style.configure("Top.TFrame", background=self.theme["top"])
-        style.configure("Panel.TFrame", background=self.theme["panel"], relief="solid", borderwidth=1)
-        style.configure("Card.TFrame", background=self.theme["card"], relief="solid", borderwidth=1)
-        style.configure("Selected.TFrame", background=self.theme["selected"], relief="solid", borderwidth=1)
-        style.configure("TButton", background=self.theme["card"], foreground=self.theme["text"], borderwidth=0, padding=(10, 7))
-        style.map("TButton", background=[("active", self.theme["selected"]), ("disabled", self.theme["input"])], foreground=[("disabled", self.theme["muted2"])])
-        style.configure("Accent.TButton", background=self.theme["accent"], foreground=self.theme["accent_text"], borderwidth=0, padding=(12, 8), font=("Segoe UI", 9, "bold"))
-        style.configure("Compact.TButton", background=self.theme["card"], foreground=self.theme["text"], borderwidth=0, padding=(6, 2))
-        style.configure("TEntry", fieldbackground=self.theme["input"], foreground=self.theme["text"], bordercolor=self.theme["border"], padding=5)
-        style.configure("TCombobox", fieldbackground=self.theme["input"], foreground=self.theme["text"], arrowcolor=self.theme["text"], padding=4)
-        style.configure("TNotebook", background=self.theme["base"], borderwidth=0)
-        style.configure("TNotebook.Tab", background=self.theme["top"], foreground=self.theme["muted"], padding=(14, 9))
-        style.map("TNotebook.Tab", background=[("selected", self.theme["selected"])], foreground=[("selected", self.theme["text"])])
-        style.configure("Treeview", background=self.theme["panel"], foreground=self.theme["text"], fieldbackground=self.theme["panel"], bordercolor=self.theme["border"], lightcolor=self.theme["border"], darkcolor=self.theme["border"], rowheight=36)
-        style.map("Treeview", background=[("selected", self.theme["selection"])], foreground=[("selected", self.theme["text"])])
-        style.configure("Treeview.Heading", background=self.theme["card"], foreground=self.theme["text"], bordercolor=self.theme["border"], relief="solid", font=("Segoe UI", 9, "bold"))
-        style.map("Treeview.Heading", background=[("active", self.theme["selected"])])
-
-    def _install_runtime_theme(self) -> None:
-        self._retint_widget(self.root, recursive=True)
-        self.root.bind_all("<Map>", lambda event: self._retint_widget(event.widget, recursive=True), add="+")
-
-    def _retint_widget(self, widget: tk.Misc, recursive: bool = False) -> None:
-        if not isinstance(widget, tk.Misc):
-            return
-        options = {
-            "background": "background",
-            "foreground": "foreground",
-            "activebackground": "activebackground",
-            "activeforeground": "activeforeground",
-            "highlightbackground": "highlightbackground",
-            "highlightcolor": "highlightcolor",
-            "insertbackground": "insertbackground",
-            "selectbackground": "selectbackground",
-            "selectforeground": "selectforeground",
-        }
-        changes = {}
-        for option in options:
-            try:
-                current = str(widget.cget(option)).lower()
-            except (tk.TclError, AttributeError):
-                continue
-            replacement = LEGACY_COLOR_MAP.get(current)
-            if replacement and replacement.lower() != current:
-                changes[option] = replacement
-        try:
-            current_text = str(widget.cget("text"))
-            replacement_text = TEXT_REPLACEMENTS.get(current_text)
-            if replacement_text:
-                changes["text"] = replacement_text
-        except (tk.TclError, AttributeError):
-            pass
-        if changes:
-            try:
-                widget.configure(**changes)
-            except tk.TclError:
-                pass
-        if recursive:
-            try:
-                children = widget.winfo_children()
-            except tk.TclError:
-                children = []
-            for child in children:
-                self._retint_widget(child, recursive=True)
 
     def _configure_rarity_tags(self) -> None:
         for tree_name in ("inventory_tree", "stash_tree", "trading_tree", "all_tree"):
@@ -246,21 +96,6 @@ class EnhancedProEditor(legacy.ProEditor):
         super().refresh_all()
         self._configure_rarity_tags()
         self._apply_rarity_tags()
-        self._retint_widget(self.root, recursive=True)
-
-    def open_smart_center(self) -> None:
-        before = set(self.root.winfo_children())
-        super().open_smart_center()
-        self.root.update_idletasks()
-        for child in self.root.winfo_children():
-            if child in before or not isinstance(child, tk.Toplevel):
-                continue
-            try:
-                if child.title() == "Assistente guiado":
-                    child.title("Inteligência — equipamentos, desbloqueios e Mercado")
-            except tk.TclError:
-                pass
-            self._retint_widget(child, recursive=True)
 
     def _hero_weights(self, hero_key: int) -> dict[int, float]:
         heroes = self.hero_profiles.get("heroes", {}) if isinstance(self.hero_profiles, dict) else {}
@@ -281,9 +116,6 @@ class EnhancedProEditor(legacy.ProEditor):
             self._hero_weights(legacy.safe_int(hero.get("heroKey"))),
             unprofiled_stat_weight=float(self.hero_profiles.get("default_unprofiled_weight", 0.85) or 0.85),
         )
-
-    def slot_prefixes(self, hero_key: int, slot_index: int) -> set[str]:
-        return intelligence_slot_prefixes(hero_key, slot_index)
 
     def auto_equip_score(self, item: dict | None, hero: dict) -> tuple[float, ...]:
         return self.auto_equip_breakdown(item, hero).as_tuple()
@@ -458,7 +290,6 @@ class EnhancedProEditor(legacy.ProEditor):
         return True, reason
 
     def market_candidates(self, stash_page: int, limit: int) -> list[dict]:
-        target = f"Armazem {stash_page}"
         rows: list[dict] = []
         snapshot = self.market_snapshot
         for source_row in self.storage_item_rows():
@@ -482,9 +313,8 @@ class EnhancedProEditor(legacy.ProEditor):
             )
             rows.append(row)
         rows.sort(key=lambda row: (row["quality"], legacy.normalize_search_text(self.item_name(row["item"]))), reverse=True)
-        capacity = self.free_slot_count(target)
-        batch_limit = min(max(0, limit), capacity, self.configured_market_slots())
-        return rows[:batch_limit]
+        self.last_market_pool = len(rows)
+        return rows[: min(max(0, limit), self.market_round_capacity(stash_page))]
 
     def start_db_download(self) -> None:
         previous_rows = list(self.db)
@@ -568,17 +398,12 @@ class EnhancedProEditor(legacy.ProEditor):
         return super().campaign_access_changes(apply=apply)
 
 
-def main() -> None:
-    root = Tk()
-    app = EnhancedProEditor(root)
-    requested = Path(sys.argv[1]) if len(sys.argv) > 1 and not str(sys.argv[1]).startswith("-") else None
-    default_dump = legacy.APP_DIR / "player_dump.json"
-    if requested and requested.is_file():
-        app.load_dump(requested)
-    elif default_dump.exists():
-        app.load_dump(default_dump)
-    root.mainloop()
-
-
+# Este módulo é uma camada intermediária, não uma aplicação. Até a 3.3.2 ele
+# expunha um ``main()`` próprio: executá-lo diretamente entregava um editor sem
+# a persistência transacional, sem a detecção fail-safe do jogo aberto e sem os
+# bloqueios de criação/duplicação do Modo Protegido — todos aplicados apenas na
+# camada final. A entrada suportada é hollyedittbh_final.py.
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "hollyedittbh_next é uma camada interna. Execute: py -3.12 hollyedittbh_final.py"
+    )

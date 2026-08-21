@@ -142,7 +142,17 @@ class DataValidationTests(unittest.TestCase):
         editor.path = None
         editor.confirm_discard_or_save = lambda: True
         editor.load_dump = lambda _path: None
-        with patch("tbh_save_editor.filedialog.askopenfilename", return_value="") as dialog:
+        # A pasta do jogo só existe no Windows com o TBH instalado; sem simular
+        # a presença dela, este teste passava por acidente em qualquer host.
+        with patch("tbh_save_editor.GAME_SAVE_DIR") as game_dir, patch(
+            "tbh_save_editor.DEFAULT_SAVE_FILE"
+        ) as save_file, patch(
+            "tbh_save_editor.filedialog.askopenfilename", return_value=""
+        ) as dialog:
+            game_dir.is_dir.return_value = True
+            game_dir.__str__ = lambda _self: str(GAME_SAVE_DIR)
+            save_file.is_file.return_value = True
+            save_file.name = "SaveFile_Live.es3"
             editor.open_dump()
         self.assertEqual(Path(dialog.call_args.kwargs["initialdir"]), GAME_SAVE_DIR)
         self.assertEqual(dialog.call_args.kwargs.get("initialfile"), "SaveFile_Live.es3")

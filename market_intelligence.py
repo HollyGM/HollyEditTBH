@@ -12,14 +12,33 @@ from typing import Mapping
 from urllib.parse import unquote
 import urllib.request
 
-STEAM_APP_ID = 3678970
+from app_meta import APP_VERSION
+from market_policy import (
+    BASE_LISTING_SLOTS,
+    CUBE_MARKET_UNLOCK_LEVEL,
+    HIGH_GRADE_GEAR_BLOCKED,
+    LOW_GRADE_GEAR_BLOCKED,
+    POLICY_CHECKED_AT,
+    STEAM_APP_ID,
+    MarketEligibility,
+    market_eligibility,
+    trade_ship_status,
+)
+
 STEAM_MARKET_SEARCH = "https://steamcommunity.com/market/search/"
-BASE_LISTING_SLOTS = 4
 LISTING_COOLDOWN_HOURS = 8
-LOW_GRADE_GEAR_BLOCKED = {"COMMON", "UNCOMMON", "RARE"}
-HIGH_GRADE_GEAR_BLOCKED = {"CELESTIAL", "DIVINE", "COSMIC"}
-POLICY_CHECKED_AT = "2026-07-06"
 SNAPSHOT_TTL_SECONDS = 6 * 60 * 60
+MARKET_USER_AGENT = f"HollyEditTBH/{APP_VERSION} (+public Steam Community Market snapshot)"
+
+__all__ = [
+    "BASE_LISTING_SLOTS", "CUBE_MARKET_UNLOCK_LEVEL", "HIGH_GRADE_GEAR_BLOCKED",
+    "LOW_GRADE_GEAR_BLOCKED", "POLICY_CHECKED_AT", "STEAM_APP_ID", "STEAM_MARKET_SEARCH",
+    "MARKET_USER_AGENT", "SNAPSHOT_TTL_SECONDS", "LISTING_COOLDOWN_HOURS",
+    "MarketEligibility", "MarketQuote", "MarketSnapshot", "market_eligibility",
+    "trade_ship_status", "normalize_market_text", "parse_market_search_html",
+    "load_market_snapshot", "save_market_snapshot", "fetch_market_snapshot",
+    "prefer_snapshot", "quote_for_item", "market_priority",
+]
 
 
 @dataclass(frozen=True)
@@ -43,28 +62,11 @@ class MarketSnapshot:
         return time.time() - self.captured_at <= ttl_seconds
 
 
-@dataclass(frozen=True)
-class MarketEligibility:
-    allowed: bool
-    reason: str
-    policy_checked_at: str = POLICY_CHECKED_AT
-
-
 def normalize_market_text(value: object) -> str:
     text = html_lib.unescape(str(value or ""))
     text = re.sub(r"\s+", " ", text).strip().casefold()
     text = re.sub(r"[^0-9a-zà-ÿ]+", " ", text)
     return " ".join(text.split())
-
-
-def market_eligibility(item_type: str, rarity: str, *, is_soulstone: bool = False) -> MarketEligibility:
-    kind = str(item_type or "").upper()
-    grade = str(rarity or "").upper()
-    if kind == "GEAR" and grade in LOW_GRADE_GEAR_BLOCKED:
-        return MarketEligibility(False, f"equipamento {grade} ou inferior não é elegível pela política conhecida")
-    if kind == "GEAR" and grade in HIGH_GRADE_GEAR_BLOCKED and not is_soulstone:
-        return MarketEligibility(False, f"equipamento {grade} permanece bloqueado pela última política oficial confirmada")
-    return MarketEligibility(True, "pré-candidato; a confirmação final continua sendo feita pelo Navio de Trocas")
 
 
 def _strip_tags(value: str) -> str:
@@ -180,6 +182,22 @@ def save_market_snapshot(path: Path, snapshot: MarketSnapshot) -> None:
             temp.unlink()
 
 
+def prefer_snapshot(cached: MarketSnapshot | None, candidate: MarketSnapshot) -> MarketSnapshot:
+    """Preserva a fonte mais confiável quando a nova coleta parece truncada.
+
+    Um snapshot completo já armazenado sempre prevalece sobre uma coleta nova
+    incompleta. Entre dois snapshots incompletos, usa-se temporariamente o que
+    contém mais cotações, sem persistir a resposta parcial sobre o cache.
+    """
+    if candidate.complete:
+        return candidate
+    if cached and cached.complete:
+        return cached
+    if cached and len(cached.quotes) >= len(candidate.quotes):
+        return cached
+    return candidate
+
+
 def fetch_market_snapshot(
     cache_path: Path,
     *,
@@ -189,7 +207,13 @@ def fetch_market_snapshot(
     page_size: int = 100,
     timeout: int = 15,
 ) -> MarketSnapshot:
-    """Bounded public Steam Market refresh; never logs in or bypasses throttling."""
+    """Coleta pública e limitada do Steam Market, sem degradar um cache válido.
+
+    Nunca faz login, não usa cookies e respeita um intervalo entre páginas. Um
+    cache completo anterior prevalece sobre uma coleta nova truncada; uma
+    resposta parcial só é gravada quando não existe cache algum, para que a
+    próxima abertura do editor não repita as doze páginas do zero.
+    """
     cached = load_market_snapshot(cache_path)
     if cached and cached.is_fresh(ttl_seconds) and not force:
         return cached
@@ -197,29 +221,40 @@ def fetch_market_snapshot(
     all_quotes: dict[str, MarketQuote] = {}
     total_reported: int | None = None
     complete = False
+
     try:
         for page in range(max(1, min(max_pages, 20))):
             start = page * page_size
-            url = f"{STEAM_MARKET_SEARCH}?appid={STEAM_APP_ID}&start={start}&count={page_size}&sort_column=popular&sort_dir=desc"
-            req = urllib.request.Request(
+            url = (
+                f"{STEAM_MARKET_SEARCH}?appid={STEAM_APP_ID}&start={start}"
+                f"&count={page_size}&sort_column=popular&sort_dir=desc"
+            )
+            request = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "HollyEditTBH/3.x (+public Steam Community Market snapshot)",
+                    "User-Agent": MARKET_USER_AGENT,
                     "Accept-Language": "en-US,en;q=0.8",
                 },
             )
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = response.read().decode("utf-8", errors="replace")
+
             rows, reported = parse_market_search_html(body)
             if reported is not None:
                 total_reported = reported
+
             if not rows:
-                complete = page > 0
+                complete = total_reported is not None and len(all_quotes) >= total_reported
                 break
+
             for quote in rows:
                 all_quotes[normalize_market_text(quote.hash_name)] = quote
-            if len(rows) < page_size or (total_reported is not None and len(all_quotes) >= total_reported):
+
+            if total_reported is not None and len(all_quotes) >= total_reported:
                 complete = True
+                break
+            if len(rows) < page_size:
+                complete = total_reported is None or len(all_quotes) >= total_reported
                 break
             time.sleep(0.65)
     except Exception:
@@ -227,13 +262,16 @@ def fetch_market_snapshot(
             return cached
         raise
 
-    snapshot = MarketSnapshot(time.time(), list(all_quotes.values()), complete, total_reported)
-    if not snapshot.quotes:
+    candidate = MarketSnapshot(time.time(), list(all_quotes.values()), complete, total_reported)
+    if not candidate.quotes:
         if cached:
             return cached
         raise ValueError("Steam Market respondeu sem itens reconhecíveis")
-    save_market_snapshot(cache_path, snapshot)
-    return snapshot
+
+    selected = prefer_snapshot(cached, candidate)
+    if selected is candidate and (candidate.complete or cached is None):
+        save_market_snapshot(cache_path, candidate)
+    return selected
 
 
 def quote_for_item(snapshot: MarketSnapshot | None, item_name: str, rarity: str) -> MarketQuote | None:

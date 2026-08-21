@@ -103,25 +103,28 @@ class ProtectedModeFinalTests(unittest.TestCase):
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
             self.assertEqual(editor.market_round_capacity(7), 4)
 
-    def test_market_fill_context_caps_inherited_free_slot_count(self):
+    def test_free_slot_count_reports_the_real_space_without_hidden_caps(self):
+        """free_slot_count deixou de mentir para agradar a um chamador específico.
+
+        A 3.3.2 interceptava esta função, inspecionava o nome do chamador com
+        sys._getframe e devolvia o limite da rodada em vez do espaço real. O
+        limite agora tem nome próprio em market_round_capacity."""
         player = minimal_player()
         player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
         editor = final_headless({"account": {}, "player": player}, [])
-
-        def fill_market_page():
-            return editor.free_slot_count("Armazem 7")
-
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
-            self.assertEqual(fill_market_page(), 4)
+            self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+            self.assertEqual(editor.market_round_capacity(7), 4)
+            self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
 
-    def test_market_summary_capacity_is_consumed_once(self):
+    def test_market_round_capacity_is_stable_across_repeated_reads(self):
+        """Sem estado de uma leitura só: chamar duas vezes devolve o mesmo número."""
         player = minimal_player()
         player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
         editor = final_headless({"account": {}, "player": player}, [])
-        editor._market_summary_capacity = ("Armazem 7", 4)
-        self.assertEqual(editor.free_slot_count("Armazem 7"), 4)
-        self.assertIsNone(editor._market_summary_capacity)
-        self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+        with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
+            self.assertEqual([editor.market_round_capacity(7) for _ in range(3)], [4, 4, 4])
+        self.assertFalse(hasattr(editor, "_market_summary_capacity"))
 
     def test_file_signature_detects_same_size_same_timestamp_content_change(self):
         editor = final_headless()
