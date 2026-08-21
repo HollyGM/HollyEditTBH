@@ -4,13 +4,37 @@ Editor independente e não oficial de saves do **TBH: Task Bar Hero** para Windo
 
 Projeto: <https://github.com/HollyGM/HollyEditTBH>
 
-Versão proposta: **3.3.2**
+Versão proposta: **3.4.0**
 
 ## Estado da versão
 
-A 3.3.2 é um patch de confiabilidade sobre a 3.3.1 auditada. O formato do save, AES, derivação de chave, HMAC de `SystemInfo`, inteligência de equipamentos e política de Mercado não foram alterados. O foco desta revisão é fechar uma janela de concorrência na persistência, tornar o Modo Protegido fail-safe quando verificações locais falham e fixar a toolchain de build usada pelo CI.
+A 3.4.0 corrige defeitos de domínio e remove os acoplamentos frágeis entre as três camadas do editor. O formato do save, AES, derivação de chave, HMAC de `SystemInfo` e a persistência transacional da 3.3.2 permanecem intactos.
+
+O que mudou de comportamento:
+
+- **espaço 6 volta a ser o amuleto.** O núcleo mapeava o prefixo `62` tanto no espaço 6 quanto no 8, de modo que nenhum amuleto era aceito no próprio espaço e um anel parecia válido nos dois. A divergência só não aparecia no produto porque a camada intermediária sobrescrevia a tabela em tempo de importação;
+- **gate do Navio de Trocas.** O Mercado só existe com o Cubo no nível 10. O editor lê `cubeSaveLevelData` e diz, na própria janela, se este save já tem acesso — antes ele preparava filas para uma conta que não podia listar nada;
+- **uma política de Mercado só.** `MARKET_POLICY_CHECKED_AT` ("12/08/2026") e `POLICY_CHECKED_AT` ("2026-07-06") eram duas datas diferentes exibidas na mesma janela. Agora existe `market_policy.py`;
+- **páginas bloqueadas do armazém são reportadas.** Uma página de DLC não comprada devolvia "0 pré-candidato(s) · capacidade disponível atendida", texto que culpava o save pelo que era limitação do destino;
+- **espaço sem chave de desbloqueio falha fechado.** Antes a ausência de `IsUnLock` era lida como liberada, e a gravação seguinte marcava a página como desbloqueada no save;
+- **ferramenta de moedas comemorativas** (ver seção própria);
+- **uma entrada só.** `hollyedittbh_next.py` expunha um `main()` próprio: executá-lo entregava um editor sem persistência transacional, sem detecção fail-safe do jogo aberto e sem os bloqueios de criação/duplicação do Modo Protegido.
 
 A auditoria histórica da 3.3.1 permanece em `AUDITORIA_FINAL_v3.3.1.md` e continua sendo a referência das garantias já conquistadas.
+
+## Moedas comemorativas
+
+As dez *Anniversary Coins* ocupam a faixa 160001-160010, são do tipo MATERIAL e cobrem uma raridade cada, de Comum a Cósmico. Caem de baús, não têm receita e são consumidas na aba **Oferenda** do Cubo, que devolve um equipamento aleatório. Por serem material, negociam no Mercado em qualquer raridade — inclusive Divino e Cósmico, que ficam bloqueados quando são equipamento.
+
+A aba **Moedas** da Central de Inteligência localiza todas as cópias espalhadas pelo inventário e pelo armazém, mostra quantidade e origem por moeda e reúne tudo em uma página escolhida do armazém. A fila:
+
+- move apenas moedas que já existem no save; não cria, duplica, converte nem consome nenhuma;
+- ignora as que já estão na página de destino, em vez de gastar espaço trocando um slot por outro;
+- ordena da raridade mais alta para a mais baixa, para que o espaço disponível seja ocupado pelas mais valiosas;
+- recusa uma página bloqueada e diz que ela está bloqueada;
+- passa pela mesma confirmação e pela mesma gravação transacional das demais filas.
+
+O registro das dez moedas vive em `commemorative_coins.py` e é conferido contra `tbh_items_cache.json` por teste automatizado.
 
 ## Recursos principais
 
@@ -77,6 +101,14 @@ A criação e duplicação local continuam disponíveis somente após desativaç
 
 ## Mercado Steam
 
+Toda a política vive em `market_policy.py` e é conferida por teste. Regras públicas na data de `POLICY_CHECKED_AT`:
+
+- o **Navio de Trocas**, dentro do Cubo, é a única porta entre o save e o inventário Steam, e abre no **Cubo nível 10**;
+- equipamento negocia **a partir de Lendário**: Comum, Incomum e Raro foram retirados do Mercado;
+- equipamento **Celestial, Divino e Cósmico** segue restrito, com exceção conhecida para Soulstones;
+- **material negocia em qualquer raridade** — é por isso que as moedas comemorativas entram mesmo sendo Cósmicas;
+- a conta precisa de **Steam Guard** ativo para listar.
+
 A política conservadora da 3.3.1 foi preservada:
 
 - 4 slots por rodada por padrão;
@@ -87,7 +119,7 @@ A política conservadora da 3.3.1 foi preservada:
 - o editor não acessa login, cookies privados ou inventário autenticado da Steam;
 - não envia itens à Steam e não promete elegibilidade, preço, venda ou demanda.
 
-O User-Agent da coleta pública passou a usar `APP_VERSION`, evitando divergência futura entre a versão do aplicativo e o identificador da consulta, sem mudar a política de rede.
+A coleta pública tinha duas implementações quase idênticas — `market_intelligence.fetch_market_snapshot` e a versão protegida de `market_snapshot_guard` — com semânticas divergentes de `complete` e User-Agents diferentes (`HollyEditTBH/3.x` contra `APP_VERSION`). A versão protegida virou a única implementação; `market_snapshot_guard` permanece apenas como nome estável.
 
 Para contas que efetivamente disponham de mais slots, o limite técnico pode ser ajustado pela variável de ambiente `HOLLYEDIT_MARKET_SLOTS`, entre 1 e 12.
 
@@ -99,7 +131,7 @@ A entrada suportada continua sendo:
 py -3.12 hollyedittbh_final.py
 ```
 
-`legacy_editor.py` contém o núcleo histórico isolado. `tbh_save_editor.py` permanece apenas como ponte de compatibilidade: importações resolvem para o núcleo legado e execução direta redireciona para `hollyedittbh_final.py`. O `HollyEditTBH.spec` continua empacotando a entrada final; não existem duas aplicações independentes.
+`hollyedittbh_next.py` e `legacy_editor.py` são camadas internas, não aplicações: executá-las diretamente é recusado com uma mensagem apontando a entrada suportada. `tbh_save_editor.py` permanece apenas como ponte de compatibilidade: importações resolvem para o núcleo legado e execução direta redireciona para `hollyedittbh_final.py`. O `HollyEditTBH.spec` continua empacotando a entrada final; não existem duas aplicações independentes.
 
 ## Testes
 
@@ -109,7 +141,9 @@ Executar a mesma suíte usada pelo CI:
 py -3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py
 ```
 
-A suíte proposta contém **69 testes automatizados**: os 55 do baseline 3.3.1 mais 14 regressões de endurecimento da 3.3.2. Entre as novas regressões estão conflito externo, corrida no instante do commit, falha da substituição, recuperação do estado parcial documentado de `ReplaceFileW`, concorrência durante rollback sem perda da versão mais nova, preservação de backups, saves sucessivos, caminho Unicode, assinatura indisponível, falhas de detecção do processo e resolução segura de `tasklist.exe`.
+A suíte contém **109 testes automatizados**: os 69 do baseline 3.3.2 mais 40 regressões da 3.4.0. As novas cobrem o registro das moedas comemorativas conferido contra o catálogo, o plano de consolidação (ordem por raridade, espaço restrito, página bloqueada, idempotência), o gate do Cubo nível 10, a política de Mercado como definição única, a compatibilidade do espaço do amuleto, o desbloqueio de espaço falhando fechado, os resumos de fila que separam "sem candidato" de "sem espaço", e a ausência dos hacks removidos.
+
+Dois testes do baseline só passavam em um host Windows com o jogo instalado; agora exercitam o comportamento pretendido em qualquer plataforma.
 
 O CI também executa:
 
@@ -117,7 +151,7 @@ O CI também executa:
 - smoke test de 3 segundos da ponte `tbh_save_editor.py`;
 - instalação da toolchain fixada em `requirements-build.txt`;
 - build pelo PyInstaller;
-- conferência exata de `FileVersion` e `ProductVersion` 3.3.2/3.3.2.0;
+- conferência exata de `FileVersion` e `ProductVersion` 3.4.0/3.4.0.0;
 - inicialização real do `.exe` por 5 segundos;
 - geração de `SHA256SUMS.txt`;
 - validação de que `dist` contém somente `HollyEditTBH.exe` e `SHA256SUMS.txt`;
@@ -147,7 +181,7 @@ O GitHub Actions publica `HollyEditTBH.exe` e `SHA256SUMS.txt` no mesmo artefato
 Três itens permanecem deliberadamente fora de automação nesta revisão:
 
 - **Assinatura digital do executável:** tecnicamente recomendável, mas depende de certificado/chave privada e de política de custódia de segredo. Nenhum certificado foi inventado ou incluído no repositório.
-- **GitHub Release/tag:** pode ser automatizado no futuro após merge por workflow separado e permissões mínimas, mas a 3.3.2 não publica release automaticamente. O repositório continua sem release/tag criado por esta mudança.
+- **GitHub Release/tag:** pode ser automatizado no futuro após merge por workflow separado e permissões mínimas, mas a 3.4.0 não publica release automaticamente. O repositório continua sem release/tag criado por esta mudança.
 - **Licença:** o repositório não recebe uma licença por decisão automática. A escolha da licença é decisão jurídica/do proprietário e deve ser feita expressamente pelo mantenedor.
 
 ## Atalhos

@@ -23,6 +23,21 @@ from tkinter import ttk
 import tkinter as tk
 
 from app_meta import APP_NAME, APP_VERSION
+import commemorative_coins as coins
+from intelligence_engine import (
+    SLOT_NAMES as INTELLIGENCE_SLOT_NAMES,
+    slot_prefixes as intelligence_slot_prefixes,
+)
+from market_policy import (
+    BASE_LISTING_SLOTS,
+    HIGH_GRADE_GEAR_BLOCKED,
+    OFFICIAL_NEWS_URL,
+    POLICY_CHECKED_AT,
+    SOURCE_TYPES_EXCLUDED,
+    market_eligibility,
+    policy_summary,
+    trade_ship_status,
+)
 from save_layer import ES3_PASSWORD, SaveFile
  
  
@@ -41,6 +56,29 @@ HERO_PORTRAIT_DIR = RESOURCE_DIR / "hero_portraits"
 GAME_SAVE_DIR = Path.home() / "AppData" / "LocalLow" / "TesseractStudio" / "TaskbarHero"
 DEFAULT_SAVE_FILE = GAME_SAVE_DIR / "SaveFile_Live.es3"
  
+THEME = {
+    "base": "#08111F",
+    "top": "#0F1B2D",
+    "panel": "#111F33",
+    "card": "#172A43",
+    "selected": "#1D3C5F",
+    "input": "#0B1728",
+    "border": "#2B4566",
+    "text": "#F4F7FB",
+    "muted": "#A9B8CC",
+    "muted2": "#7F93AD",
+    "accent": "#53D6C5",
+    "accent_text": "#061712",
+    "selection": "#2F6FED",
+    "danger": "#FF8C82",
+    "success": "#77D6AE",
+    "warning": "#F5C66A",
+    "disabled": "#475569",
+    "recipe_decoration": "#9D64FF",
+    "recipe_engraving": "#55C8FF",
+    "recipe_inscription": "#69DB5B",
+}
+
 HERO_NAMES = {
     101: "Cavaleiro",
     201: "Arqueira",
@@ -50,18 +88,13 @@ HERO_NAMES = {
     601: "Matador",
 }
  
-SLOT_NAMES = {
-    0: "ARMA PRINCIPAL",
-    1: "ARMA SECUNDÁRIA",
-    2: "CAPACETE",
-    3: "ARMADURA",
-    4: "LUVAS",
-    5: "BOTAS",
-    6: "ANEL",
-    7: "BRINCO",
-    8: "ANEL",
-    9: "ABRAÇADEIRA",
-}
+# Nomes e prefixos de espaço vivem em intelligence_engine, que não depende de
+# tkinter e é o módulo compartilhado com os testes. Até a 3.3.2 existiam duas
+# tabelas: a daqui trazia "ANEL" no espaço 6 e o prefixo 62 tanto no 6 quanto no
+# 8, de modo que nenhum amuleto era aceito no espaço do amuleto. A divergência
+# só não aparecia no produto porque a camada intermediária sobrescrevia o dict
+# do módulo em tempo de importação.
+SLOT_NAMES = dict(INTELLIGENCE_SLOT_NAMES)
 
 STASH_PAGE_SIZE = 66
 STASH_PAGE_COUNT = 7
@@ -69,12 +102,12 @@ STASH_TARGETS = [f"Armazem {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 STASH_DISPLAY_TARGETS = [f"Armazém {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 ITEM_DESTINATIONS = ["Automatico", "Inventario", *STASH_TARGETS]
 
-# Política conservadora baseada no último aviso oficial disponível em 12/08/2026.
-# A Steam e o jogo continuam sendo a fonte final de verdade no momento da listagem.
-MARKET_POLICY_CHECKED_AT = "12/08/2026"
-MARKET_RESTRICTED_RARITIES = {"COSMIC", "DIVINE", "CELESTIAL"}
-MARKET_SOURCE_TYPES_EXCLUDED = {0, 10}
-MARKET_OFFICIAL_NEWS_URL = "https://steamcommunity.com/app/3678970/allnews/"
+# A política de Mercado vive em market_policy.py. Estes nomes continuam
+# exportados porque a interface e os testes históricos os importam daqui.
+MARKET_POLICY_CHECKED_AT = POLICY_CHECKED_AT
+MARKET_RESTRICTED_RARITIES = set(HIGH_GRADE_GEAR_BLOCKED)
+MARKET_SOURCE_TYPES_EXCLUDED = set(SOURCE_TYPES_EXCLUDED)
+MARKET_OFFICIAL_NEWS_URL = OFFICIAL_NEWS_URL
 PROTECTED_BATCH_LIMIT = 10
 KNOWN_ATTRIBUTE_GROUP_KEYS = list(range(10002, 10009))
 KNOWN_CUBE_RECIPE_MAX_BY_VERSION = {
@@ -204,10 +237,10 @@ RARITY_ENCHANT_SLOT_COUNT = {
 }
  
 RECIPE_COLORS = {
-    "DECORAÇÃO": "#9d64ff",
-    "GRAVAÇÃO": "#55c8ff",
-    "INSCRIÇÃO": "#69db5b",
-    "VAZIO": "#64748b",
+    "DECORAÇÃO": THEME["recipe_decoration"],
+    "GRAVAÇÃO": THEME["recipe_engraving"],
+    "INSCRIÇÃO": THEME["recipe_inscription"],
+    "VAZIO": THEME["muted2"],
 }
  
 STAT_TYPES = {
@@ -645,6 +678,10 @@ class ProEditor:
         self.session_created_uids: set[int] = set()
         self.session_modified_uids: set[int] = set()
         self.protected_mode = True
+        # Tamanho do conjunto elegível antes do corte por capacidade, para que o
+        # resumo saiba distinguir "não há candidato" de "não há espaço".
+        self.last_market_pool = 0
+        self.last_recycle_pool = 0
  
         self.path_var = StringVar(value="Nenhum save aberto")
         self.status_var = StringVar(value="Passo 1: clique em Abrir save para começar.")
@@ -666,47 +703,47 @@ class ProEditor:
         self.root.after(120, self.poll_jobs)
  
     def setup_style(self) -> None:
-        self.root.configure(bg="#0e1420")
+        self.root.configure(bg=THEME["base"])
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure(".", background="#0e1420", foreground="#e6edf7", fieldbackground="#172033", bordercolor="#2c3a51")
-        style.configure("Top.TFrame", background="#172033")
-        style.configure("Panel.TFrame", background="#111a29", relief="solid", borderwidth=1)
-        style.configure("Card.TFrame", background="#1a2638", relief="solid", borderwidth=1)
-        style.configure("Selected.TFrame", background="#20314a", relief="solid", borderwidth=1)
-        style.configure("TButton", background="#1c2940", foreground="#e6edf7", borderwidth=0, padding=(10, 7))
-        style.map("TButton", background=[("active", "#293b58"), ("disabled", "#151e2c")], foreground=[("disabled", "#64748b")])
-        style.configure("Accent.TButton", background="#f5b84b", foreground="#101722", borderwidth=0, padding=(12, 8), font=("Segoe UI", 9, "bold"))
-        style.configure("Compact.TButton", background="#222838", foreground="#e6edf7", borderwidth=0, padding=(6, 2))
-        style.configure("TEntry", fieldbackground="#0e1624", foreground="#e6edf7", bordercolor="#33445f", padding=5)
-        style.configure("TCombobox", fieldbackground="#0e1624", foreground="#e6edf7", arrowcolor="#e6edf7", padding=4)
-        style.configure("TNotebook", background="#0e1420", borderwidth=0)
-        style.configure("TNotebook.Tab", background="#172033", foreground="#9fb0c8", padding=(14, 9))
-        style.map("TNotebook.Tab", background=[("selected", "#263a58")], foreground=[("selected", "#ffffff")])
+        style.configure(".", background=THEME["base"], foreground=THEME["text"], fieldbackground=THEME["top"], bordercolor=THEME["border"])
+        style.configure("Top.TFrame", background=THEME["top"])
+        style.configure("Panel.TFrame", background=THEME["panel"], relief="solid", borderwidth=1)
+        style.configure("Card.TFrame", background=THEME["card"], relief="solid", borderwidth=1)
+        style.configure("Selected.TFrame", background=THEME["selected"], relief="solid", borderwidth=1)
+        style.configure("TButton", background=THEME["card"], foreground=THEME["text"], borderwidth=0, padding=(10, 7))
+        style.map("TButton", background=[("active", THEME["selected"]), ("disabled", THEME["input"])], foreground=[("disabled", THEME["muted2"])])
+        style.configure("Accent.TButton", background=THEME["accent"], foreground=THEME["accent_text"], borderwidth=0, padding=(12, 8), font=("Segoe UI", 9, "bold"))
+        style.configure("Compact.TButton", background=THEME["card"], foreground=THEME["text"], borderwidth=0, padding=(6, 2))
+        style.configure("TEntry", fieldbackground=THEME["input"], foreground=THEME["text"], bordercolor=THEME["border"], padding=5)
+        style.configure("TCombobox", fieldbackground=THEME["input"], foreground=THEME["text"], arrowcolor=THEME["text"], padding=4)
+        style.configure("TNotebook", background=THEME["base"], borderwidth=0)
+        style.configure("TNotebook.Tab", background=THEME["top"], foreground=THEME["muted"], padding=(14, 9))
+        style.map("TNotebook.Tab", background=[("selected", THEME["selected"])], foreground=[("selected", THEME["text"])])
         style.configure(
             "Treeview",
-            background="#111a29",
-            foreground="#dbe7f7",
-            fieldbackground="#111a29",
-            bordercolor="#34405a",
-            lightcolor="#34405a",
-            darkcolor="#34405a",
+            background=THEME["panel"],
+            foreground=THEME["text"],
+            fieldbackground=THEME["panel"],
+            bordercolor=THEME["border"],
+            lightcolor=THEME["border"],
+            darkcolor=THEME["border"],
             rowheight=36,
         )
         style.map(
             "Treeview",
-            background=[("selected", "#2f6fd6")],
-            foreground=[("selected", "#ffffff")],
+            background=[("selected", THEME["selection"])],
+            foreground=[("selected", THEME["text"])],
         )
         style.configure(
             "Treeview.Heading",
-            background="#1a2638",
-            foreground="#ffffff",
-            bordercolor="#34405a",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            bordercolor=THEME["border"],
             relief="solid",
             font=("Segoe UI", 9, "bold"),
         )
-        style.map("Treeview.Heading", background=[("active", "#2a3144")])
+        style.map("Treeview.Heading", background=[("active", THEME["selected"])])
 
     def configure_dialog(self, win: tk.Toplevel, width: int, height: int, resizable: bool = False) -> None:
         """Mantém janelas auxiliares centralizadas e visíveis em qualquer escala do Windows."""
@@ -727,11 +764,11 @@ class ProEditor:
         top.pack(fill=X)
         primary = ttk.Frame(top, style="Top.TFrame")
         primary.pack(fill=X)
-        brand = tk.Frame(primary, bg="#172033")
+        brand = tk.Frame(primary, bg=THEME["top"])
         brand.grid(row=0, column=0, sticky="w")
-        tk.Label(brand, text="Holly", fg="#ffffff", bg="#172033", font=("Segoe UI", 12, "bold")).pack(side=LEFT)
-        tk.Label(brand, text="EditTBH", fg="#f5b84b", bg="#172033", font=("Segoe UI", 12, "bold")).pack(side=LEFT)
-        tk.Label(brand, text=f"  v{APP_VERSION}", fg="#7f91aa", bg="#172033", font=("Segoe UI", 8)).pack(side=LEFT)
+        tk.Label(brand, text="Holly", fg=THEME["text"], bg=THEME["top"], font=("Segoe UI", 12, "bold")).pack(side=LEFT)
+        tk.Label(brand, text="EditTBH", fg=THEME["accent"], bg=THEME["top"], font=("Segoe UI", 12, "bold")).pack(side=LEFT)
+        tk.Label(brand, text=f"  v{APP_VERSION}", fg=THEME["muted2"], bg=THEME["top"], font=("Segoe UI", 8)).pack(side=LEFT)
         ttk.Entry(primary, textvariable=self.path_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=12)
         ttk.Button(primary, text="Abrir save...", command=self.open_dump).grid(row=0, column=2, padx=4)
         ttk.Button(primary, text="Salvar alterações", style="Accent.TButton", command=self.save_dump).grid(row=0, column=3, padx=(4, 0))
@@ -739,7 +776,7 @@ class ProEditor:
         tools = ttk.Frame(top, style="Top.TFrame")
         tools.pack(fill=X, pady=(5, 0))
         ttk.Button(tools, text="Criar item", command=self.open_create_item_dialog).pack(side=LEFT)
-        ttk.Button(tools, text="Assistente guiado", style="Accent.TButton", command=self.open_smart_center).pack(side=LEFT, padx=4)
+        ttk.Button(tools, text="Inteligência", style="Accent.TButton", command=self.open_smart_center).pack(side=LEFT, padx=4)
         ttk.Button(tools, text="Validar save", command=self.open_validation_dialog).pack(side=LEFT, padx=4)
         more_button = ttk.Menubutton(tools, text="Mais opções")
         more_menu = tk.Menu(more_button, tearoff=False)
@@ -767,15 +804,15 @@ class ProEditor:
  
         self.hero_panel = ttk.Frame(main, style="Panel.TFrame", padding=8)
         self.hero_panel.pack(side=LEFT, fill=Y, padx=(0, 8))
-        tk.Label(self.hero_panel, text="HERÓIS", fg="#9fb0c8", bg="#111a29", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        tk.Label(self.hero_panel, text="HERÓIS", fg=THEME["muted"], bg=THEME["panel"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
         self.hero_list = ttk.Frame(self.hero_panel, style="Panel.TFrame")
         self.hero_list.pack(fill=Y, expand=True, pady=(8, 0))
  
         self.equip_panel = ttk.Frame(main, style="Panel.TFrame", padding=8)
         self.equip_panel.pack(side=LEFT, fill=Y, padx=(0, 8))
-        equip_header = tk.Frame(self.equip_panel, bg="#111a29")
+        equip_header = tk.Frame(self.equip_panel, bg=THEME["panel"])
         equip_header.pack(fill=X)
-        tk.Label(equip_header, text="ITENS EQUIPADOS", fg="#9fb0c8", bg="#111a29", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        tk.Label(equip_header, text="ITENS EQUIPADOS", fg=THEME["muted"], bg=THEME["panel"], font=("Segoe UI", 9, "bold")).pack(side=LEFT)
         ttk.Button(equip_header, text="Equipar melhor", style="Compact.TButton", command=self.open_auto_equip_preview).pack(side=RIGHT)
         self.equip_grid = ttk.Frame(self.equip_panel, style="Panel.TFrame")
         self.equip_grid.pack(fill=Y, expand=True, pady=(8, 0))
@@ -783,12 +820,12 @@ class ProEditor:
         right = ttk.Frame(main, style="Panel.TFrame", padding=10)
         right.pack(side=LEFT, fill=BOTH, expand=True)
  
-        detail_header = tk.Frame(right, bg="#111a29", height=40)
+        detail_header = tk.Frame(right, bg=THEME["panel"], height=40)
         detail_header.pack(fill=X)
         detail_header.pack_propagate(False)
-        self.detail_icon = tk.Label(detail_header, bg="#111a29", width=34)
+        self.detail_icon = tk.Label(detail_header, bg=THEME["panel"], width=34)
         self.detail_icon.pack(side=LEFT, padx=(0, 7))
-        self.detail_title = tk.Label(detail_header, text="SELECIONE UM ITEM", fg="#9fb0c8", bg="#111a29", font=("Segoe UI", 10, "bold"), anchor="w")
+        self.detail_title = tk.Label(detail_header, text="SELECIONE UM ITEM", fg=THEME["muted"], bg=THEME["panel"], font=("Segoe UI", 10, "bold"), anchor="w")
         self.detail_title.pack(side=LEFT, fill=X, expand=True)
  
         self.detail_body = ttk.Frame(right, style="Panel.TFrame")
@@ -973,17 +1010,17 @@ class ProEditor:
         tree = ttk.Treeview(parent, columns=columns, show="tree headings", height=18)
         tree.heading("#0", text="")
         tree.column("#0", width=44, minwidth=44, stretch=False, anchor="center")
-        tree.tag_configure("odd", background="#181c29", foreground="#dbe7f7")
-        tree.tag_configure("even", background="#1d2231", foreground="#dbe7f7")
-        for col, text, width in [
-            ("where", "Local", 140),
-            ("key", "Código", 80),
-            ("name", "Nome", 220),
-            ("rarity", "Raridade", 85),
-            ("uid", "ID único", 115),
+        tree.tag_configure("odd", background=THEME["base"], foreground=THEME["text"])
+        tree.tag_configure("even", background=THEME["card"], foreground=THEME["text"])
+        for col, text, width, minimum, stretch in [
+            ("where", "Local", 205, 120, False),
+            ("key", "Código", 80, 60, False),
+            ("name", "Nome", 260, 140, True),
+            ("rarity", "Raridade", 95, 70, False),
+            ("uid", "ID único", 90, 70, False),
         ]:
             tree.heading(col, text=text)
-            tree.column(col, width=width, minwidth=width, stretch=False, anchor="w")
+            tree.column(col, width=width, minwidth=minimum, stretch=stretch, anchor="w")
         tree.pack(fill=BOTH, expand=True)
         tree.bind("<<TreeviewSelect>>", lambda _e, t=tree: self.select_from_tree(t))
         setattr(self, f"{name}_tree", tree)
@@ -1082,15 +1119,15 @@ class ProEditor:
     def open_value_editor(self, title: str, field: str, original: object, callback) -> None:
         win = tk.Toplevel(self.root)
         win.title(title)
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.geometry("650x260" if isinstance(original, (list, dict)) else "520x160")
-        tk.Label(win, text=field, fg="#9fb0c8", bg="#181c29").pack(anchor="w", padx=14, pady=(14, 6))
+        tk.Label(win, text=field, fg=THEME["muted"], bg=THEME["base"]).pack(anchor="w", padx=14, pady=(14, 6))
         if isinstance(original, bool):
             var = StringVar(value="Sim" if original else "Não")
             widget = ttk.Combobox(win, textvariable=var, values=["Não", "Sim"], state="readonly")
             getter = var.get
         elif isinstance(original, (list, dict)):
-            widget = tk.Text(win, bg="#141722", fg="#e6edf7", insertbackground="#ffffff", wrap="word", height=8)
+            widget = tk.Text(win, bg=THEME["input"], fg=THEME["text"], insertbackground=THEME["text"], wrap="word", height=8)
             widget.insert("1.0", json.dumps(original, ensure_ascii=False, indent=2))
             getter = lambda: widget.get("1.0", "end-1c")
         else:
@@ -1735,7 +1772,7 @@ class ProEditor:
             return
         win = tk.Toplevel(self.root)
         win.title("Validacao do save")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.geometry("950x600")
         summary_var = StringVar(value="")
         show_info_var = BooleanVar(value=False)
@@ -1823,7 +1860,7 @@ class ProEditor:
             return
         for hero in self.data["player"].get("heroSaveDatas", []):
             selected = hero is self.selected_hero
-            background = "#203a59" if selected else "#172438"
+            background = THEME["selected"] if selected else THEME["card"]
             frame = tk.Frame(
                 self.hero_list,
                 bg=background,
@@ -1832,7 +1869,7 @@ class ProEditor:
                 width=196,
                 height=82,
                 highlightthickness=2 if selected else 1,
-                highlightbackground="#f5b84b" if selected else "#2c3d57",
+                highlightbackground=THEME["accent"] if selected else THEME["border"],
             )
             frame.pack(fill=X, pady=4)
             frame.pack_propagate(False)
@@ -1843,11 +1880,11 @@ class ProEditor:
             name = HERO_NAMES.get(hero_key, f"Herói {hero_key}")
             text_frame = tk.Frame(frame, bg=background)
             text_frame.pack(side=LEFT, fill=BOTH, expand=True, pady=15)
-            tk.Label(text_frame, text=name, fg="#ffffff", bg=background, font=("Segoe UI", 10, "bold"), anchor="w").pack(fill=X)
+            tk.Label(text_frame, text=name, fg=THEME["text"], bg=background, font=("Segoe UI", 10, "bold"), anchor="w").pack(fill=X)
             tk.Label(
                 text_frame,
                 text=f"Nível {hero.get('HeroLevel', 0)}",
-                fg="#b5c4d8",
+                fg=THEME["muted"],
                 bg=background,
                 font=("Segoe UI", 8),
                 anchor="w",
@@ -1878,18 +1915,18 @@ class ProEditor:
  
     def make_item_card(self, parent: ttk.Frame, item: dict | None, slot: str, slot_index: int) -> tk.Frame:
         selected = item is self.selected_item and item is not None
-        frame = tk.Frame(parent, bg="#202638", bd=1, relief="solid", width=145, height=94, highlightthickness=1)
-        frame.configure(highlightbackground="#ffb84d" if selected else "#34405a")
+        frame = tk.Frame(parent, bg=THEME["card"], bd=1, relief="solid", width=145, height=94, highlightthickness=1)
+        frame.configure(highlightbackground=THEME["accent"] if selected else THEME["border"])
         frame.grid_propagate(False)
         icon = self.get_icon(item)
         if icon:
-            tk.Label(frame, image=icon, bg="#202638").pack(pady=(3, 0))
+            tk.Label(frame, image=icon, bg=THEME["card"]).pack(pady=(3, 0))
         else:
-            canvas = tk.Canvas(frame, width=30, height=30, bg="#141722", highlightthickness=1, highlightbackground="#34405a")
-            canvas.create_text(15, 15, text="?", fill="#6f7d95", font=("Segoe UI", 13, "bold"))
+            canvas = tk.Canvas(frame, width=30, height=30, bg=THEME["input"], highlightthickness=1, highlightbackground=THEME["border"])
+            canvas.create_text(15, 15, text="?", fill=THEME["muted2"], font=("Segoe UI", 13, "bold"))
             canvas.pack(pady=(3, 0))
-        tk.Label(frame, text=self.item_name(item), fg="#ffffff", bg="#202638", font=("Segoe UI", 8), wraplength=110).pack()
-        tk.Label(frame, text=slot, fg="#9fb0c8", bg="#202638", font=("Segoe UI", 7)).pack(side="bottom", pady=0)
+        tk.Label(frame, text=self.item_name(item), fg=THEME["text"], bg=THEME["card"], font=("Segoe UI", 8), wraplength=110).pack()
+        tk.Label(frame, text=slot, fg=THEME["muted"], bg=THEME["card"], font=("Segoe UI", 7)).pack(side="bottom", pady=0)
         swap_button = ttk.Button(frame, text="Trocar" if item else "Equipar", style="Compact.TButton", command=lambda: self.open_equip_dialog(self.selected_hero, slot_index))
         swap_button.pack(side="bottom", pady=(2, 2))
         frame.bind("<Button-1>", lambda _e, it=item: self.select_item(it))
@@ -1970,8 +2007,8 @@ class ProEditor:
             tk.Label(
                 self.enchant_rows,
                 text=reason,
-                fg="#9fb0c8",
-                bg="#111a29",
+                fg=THEME["muted"],
+                bg=THEME["panel"],
                 font=("Segoe UI", 10, "italic"),
             ).pack(pady=28)
         for index, enchant in enumerate(enchants):
@@ -1980,11 +2017,11 @@ class ProEditor:
     def make_enchant_row(self, index: int, enchant: dict) -> tk.Frame:
         recipe = ENCHANT_GROUPS[index] if index < len(ENCHANT_GROUPS) else "VAZIO"
         non_empty = self.enchant_is_filled(enchant)
-        color = RECIPE_COLORS.get(recipe, "#64748b") if non_empty else "#475569"
-        bg = "#222838" if non_empty else "#1d2231"
+        color = RECIPE_COLORS.get(recipe, THEME["muted2"]) if non_empty else THEME["disabled"]
+        bg = THEME["card"] if non_empty else THEME["card"]
         row = tk.Frame(self.enchant_rows, bg=bg, bd=1, relief="solid", height=72)
         row.pack_propagate(False)
-        badge = tk.Label(row, text=recipe, fg="#ffffff", bg=color, font=("Segoe UI", 7, "bold"), padx=6, pady=2)
+        badge = tk.Label(row, text=recipe, fg=THEME["text"], bg=color, font=("Segoe UI", 7, "bold"), padx=6, pady=2)
         badge.pack(side=LEFT, padx=10)
         stat = STAT_TYPES.get(safe_int(enchant.get("StatType")), f"StatType {enchant.get('StatType')}")
         mat = self.db_by_key.get(str(enchant.get("MaterialKey")), {}).get("Name", f"Material {enchant.get('MaterialKey')}")
@@ -1992,7 +2029,7 @@ class ProEditor:
             text = f"{mat}  ·  {stat}  ·  T{enchant.get('Tier')}  ·  valor {enchant.get('Value')}"
         else:
             text = "Espaço vazio — use Editar ou Colar"
-        tk.Label(row, text=text, fg="#ffffff" if non_empty else "#6f7d95", bg=bg, font=("Segoe UI", 9, "bold" if non_empty else "italic")).pack(side=LEFT, padx=8)
+        tk.Label(row, text=text, fg=THEME["text"] if non_empty else THEME["muted2"], bg=bg, font=("Segoe UI", 9, "bold" if non_empty else "italic")).pack(side=LEFT, padx=8)
         ttk.Button(row, text="Editar", command=lambda: self.open_enchant_editor(index)).pack(side=RIGHT, padx=8)
         ttk.Button(row, text="Limpar", command=lambda: self.clear_enchant(index), state="normal" if non_empty else "disabled").pack(side=RIGHT)
         ttk.Button(row, text="Colar", command=lambda: self.paste_enchant(index)).pack(side=RIGHT, padx=(0, 6))
@@ -2011,7 +2048,7 @@ class ProEditor:
         enchant = self.selected_item["EnchantData"][index]
         win = tk.Toplevel(self.root)
         win.title(f"Editar encantamento #{index + 1}")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         self.configure_dialog(win, 660, 360)
         vars_by_key: dict[str, StringVar] = {}
         recipe_label = ENCHANT_GROUPS[index].lower()
@@ -2020,8 +2057,8 @@ class ProEditor:
         tk.Label(
             win,
             text=f"Grupo: {recipe_label.capitalize()}  ·  espaço {index + 1}",
-            fg="#ffffff",
-            bg="#181c29",
+            fg=THEME["text"],
+            bg=THEME["base"],
             font=("Segoe UI", 11, "bold"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 8))
         fields = [
@@ -2037,7 +2074,7 @@ class ProEditor:
             "Value": "Valor",
         }
         for row, (key, choices) in enumerate(fields, start=1):
-            tk.Label(win, text=field_labels.get(key, key), fg="#9fb0c8", bg="#181c29").grid(row=row, column=0, sticky="w", padx=14, pady=6)
+            tk.Label(win, text=field_labels.get(key, key), fg=THEME["muted"], bg=THEME["base"]).grid(row=row, column=0, sticky="w", padx=14, pady=6)
             raw_value = str(enchant.get(key, 0))
             display_value = raw_value
             if choices:
@@ -2344,11 +2381,11 @@ class ProEditor:
     def ask_quantity(self, title: str, prompt: str, default: int = 1) -> int:
         win = tk.Toplevel(self.root)
         win.title(title)
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.resizable(False, False)
         value = StringVar(value=str(default))
         result = {"value": 0}
-        tk.Label(win, text=prompt, fg="#e6edf7", bg="#181c29").grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 8))
+        tk.Label(win, text=prompt, fg=THEME["text"], bg=THEME["base"]).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 8))
         spin = ttk.Spinbox(win, from_=1, to=999999999999, textvariable=value, width=16)
         spin.grid(row=1, column=0, sticky="w", padx=14, pady=8)
         def ok() -> None:
@@ -2409,8 +2446,21 @@ class ProEditor:
         return result
 
     def slot_is_available(self, source: str, slot: dict) -> bool:
-        unlock_key = "IsUnLock" if source == "stashSaveDatas" else "IsUnlock"
-        return not safe_int(slot.get("ItemUniqueId")) and bool(slot.get(unlock_key, True))
+        return not safe_int(slot.get("ItemUniqueId")) and self.slot_is_unlocked(source, slot)
+
+    @staticmethod
+    def slot_is_unlocked(source: str, slot: dict) -> bool:
+        """Só considera livre um espaço comprovadamente desbloqueado.
+
+        O jogo grava ``IsUnLock`` no armazém e ``IsUnlock`` no inventário. Antes
+        da 3.4.0 a ausência das duas chaves era lida como "desbloqueado", o que
+        faria o editor ocupar — e marcar como liberadas — páginas de armazém que
+        o jogador não possui. Aceitar as duas grafias e negar o desconhecido é o
+        comportamento seguro."""
+        for key in ("IsUnLock", "IsUnlock"):
+            if key in slot:
+                return bool(slot.get(key))
+        return source != "stashSaveDatas"
 
     def place_item(self, uid: int, target: str) -> int:
         for source, slot in self.slots_for_destination(target):
@@ -2426,15 +2476,100 @@ class ProEditor:
     def free_slot_count(self, target: str) -> int:
         return sum(self.slot_is_available(source, slot) for source, slot in self.slots_for_destination(target))
 
+    def stash_page_is_unlocked(self, stash_page: int) -> bool:
+        """Uma página só está disponível se algum de seus espaços estiver liberado.
+
+        As páginas de armazém acima das iniciais vêm de DLC. Sem esta checagem,
+        uma página bloqueada aparecia apenas como "0 espaços livres" e as filas
+        do assistente relatavam "capacidade atendida" quando na verdade não
+        havia para onde mover nada."""
+        slots = self.slots_for_destination(f"Armazem {stash_page}")
+        if not slots:
+            return False
+        return any(self.slot_is_unlocked(source, slot) for source, slot in slots)
+
+    def stash_page_capacity(self, stash_page: int) -> tuple[bool, int]:
+        """Devolve ``(página liberada, espaços livres)`` em uma única leitura."""
+        unlocked = self.stash_page_is_unlocked(stash_page)
+        return unlocked, self.free_slot_count(f"Armazem {stash_page}") if unlocked else 0
+
+    def storage_page_of_row(self, row: dict) -> int | None:
+        """Página do armazém de uma linha de armazenamento; ``None`` no inventário."""
+        if row.get("source") != "stashSaveDatas":
+            return None
+        return self.stash_page_for_index(safe_int(row.get("source_slot", {}).get("Index")))
+
+    def commemorative_coin_rows(self) -> list[dict]:
+        """Moedas comemorativas presentes no inventário e no armazém."""
+        return coins.collect_coin_rows(self.storage_item_rows())
+
+    def commemorative_coin_groups(self) -> list[coins.CoinGroup]:
+        return coins.group_coins(
+            self.commemorative_coin_rows(),
+            location_of=lambda row: self.storage_label(row["source"], row["source_slot"]).split(" - ")[0],
+        )
+
+    def build_commemorative_coin_plan(self, stash_page: int) -> coins.CoinPlan:
+        """Planeja juntar todas as moedas em uma página, sem alterar o save."""
+        unlocked, capacity = self.stash_page_capacity(stash_page)
+        return coins.build_coin_plan(
+            self.commemorative_coin_rows(),
+            stash_page,
+            capacity=capacity,
+            page_unlocked=unlocked,
+            page_of_row=self.storage_page_of_row,
+        )
+
+    def trade_ship_status(self):
+        """Estado do Navio de Trocas para o save aberto."""
+        return trade_ship_status(self.data["player"] if self.data else None)
+
+    def configured_market_slots(self) -> int:
+        """Slots de anúncio considerados por rodada."""
+        return BASE_LISTING_SLOTS
+
+    def page_block_reason(self, stash_page: int) -> str:
+        """Explica por que uma página não aceita a fila, em vez de só mostrar zero."""
+        if not self.stash_page_is_unlocked(stash_page):
+            return (
+                f"O Armazém {stash_page} está bloqueado neste save. As páginas extras vêm do "
+                "jogo/DLC e o editor não as libera. Escolha uma página já disponível."
+            )
+        return f"O Armazém {stash_page} não possui espaços livres."
+
+    def queue_summary_text(self, stash_page: int, shown: int, pool: int, noun: str) -> str:
+        """Resumo que separa 'não há candidato' de 'não há espaço' de 'limite da rodada'.
+
+        Até a 3.3.2 uma página bloqueada produzia "0 pré-candidato(s) seguro(s) ·
+        capacidade disponível atendida", texto que sugeria que o save não tinha
+        nada a oferecer quando o problema era o destino."""
+        unlocked, free_slots = self.stash_page_capacity(stash_page)
+        if not unlocked:
+            return self.page_block_reason(stash_page)
+        if not pool:
+            return f"Nenhum {noun} seguro encontrado fora do Armazém {stash_page}."
+        if not free_slots:
+            return f"{pool} {noun}(s) disponível(is), mas o Armazém {stash_page} está cheio."
+        held_back = max(0, pool - shown)
+        text = f"{shown} {noun}(s) nesta rodada"
+        if held_back:
+            text += f" · {held_back} fora do limite desta rodada"
+        text += f" · {free_slots} espaço(s) livre(s) no Armazém {stash_page}"
+        return text + "."
+
+    def market_round_capacity(self, stash_page: int) -> int:
+        """Quantos itens cabem na rodada: o menor entre espaço real e slots.
+
+        Ponto de extensão explícito. Até a 3.3.2 a camada final obtinha esse
+        número interceptando ``free_slot_count`` e inspecionando o nome do
+        chamador com ``sys._getframe``; qualquer renomeação silenciava o limite."""
+        unlocked, free_slots = self.stash_page_capacity(stash_page)
+        if not unlocked:
+            return 0
+        return max(0, min(free_slots, self.configured_market_slots()))
+
     def slot_prefixes(self, hero_key: int, slot_index: int) -> set[str]:
-        main = {101: "30", 201: "31", 301: "32", 401: "33", 501: "34", 601: "35"}
-        offhand = {101: "40", 201: "41", 301: "42", 401: "43", 501: "44", 601: "45"}
-        fixed = {2: "50", 3: "51", 4: "52", 5: "53", 6: "62", 7: "61", 8: "62", 9: "63"}
-        if slot_index == 0:
-            return {main.get(hero_key, "")}
-        if slot_index == 1:
-            return {offhand.get(hero_key, "")}
-        return {fixed.get(slot_index, "")}
+        return intelligence_slot_prefixes(hero_key, slot_index)
 
     def item_compatible_with_slot(self, item: dict, hero: dict, slot_index: int) -> bool:
         if self.item_db(item).get("Type") != "GEAR":
@@ -2582,10 +2717,10 @@ class ProEditor:
 
         win = tk.Toplevel(self.root)
         win.title(f"Equipar melhor - {hname}")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.geometry("1000x540")
-        tk.Label(win, text=f"TROCAS RECOMENDADAS PARA {hname.upper()}", fg="#ffffff", bg="#181c29", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(12, 3))
-        tk.Label(win, text="A raridade tem prioridade; em empate entram caos, afinidade dos atributos e tiers dos encantamentos.", fg="#9fb0c8", bg="#181c29", font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(0, 8))
+        tk.Label(win, text=f"TROCAS RECOMENDADAS PARA {hname.upper()}", fg=THEME["text"], bg=THEME["base"], font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(12, 3))
+        tk.Label(win, text="A nota combina raridade, nível conhecido, afinidade e tiers dos encantamentos; a prévia mostra a decisão antes de aplicar.", fg=THEME["muted"], bg=THEME["base"], font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(0, 8))
         columns = ("slot", "current", "current_score", "replacement", "new_score", "origin")
         tree = ttk.Treeview(win, columns=columns, show="tree headings", height=13)
         tree.heading("#0", text="")
@@ -2742,20 +2877,20 @@ class ProEditor:
             return
         win = tk.Toplevel(self.root)
         win.title("Otimizar todos os heróis")
-        win.configure(bg="#0e1420")
+        win.configure(bg=THEME["base"])
         self.configure_dialog(win, 1080, 620, resizable=True)
         tk.Label(
             win,
             text="OTIMIZAÇÃO GLOBAL DOS HERÓIS",
-            fg="#ffffff",
-            bg="#0e1420",
+            fg=THEME["text"],
+            bg=THEME["base"],
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w", padx=14, pady=(14, 3))
         tk.Label(
             win,
-            text="Cada item é usado uma única vez. A raridade tem prioridade e os encantamentos entram no desempate.",
-            fg="#9fb0c8",
-            bg="#0e1420",
+            text="Alocação global exata: cada item é usado uma única vez e nenhum herói é rebaixado para beneficiar outro.",
+            fg=THEME["muted"],
+            bg=THEME["base"],
         ).pack(anchor="w", padx=14, pady=(0, 8))
         columns = ("hero", "slot", "current", "replacement", "gain")
         tree = ttk.Treeview(win, columns=columns, show="headings", height=18)
@@ -2849,9 +2984,10 @@ class ProEditor:
         source_type = safe_int(item.get("ItemGetSourceType"), -1)
         if source_type in MARKET_SOURCE_TYPES_EXCLUDED:
             return False, "origem local não verificável pelo editor"
-        if rarity in MARKET_RESTRICTED_RARITIES and not self.item_is_soulstone(item):
-            return False, f"grau {rarity_label(rarity)} restrito no último aviso oficial"
-        reason = "pré-candidato; a confirmação final ocorre no Navio de Trocas"
+        policy = market_eligibility(str(db.get("Type") or ""), rarity, is_soulstone=self.item_is_soulstone(item))
+        if not policy.allowed:
+            return False, policy.reason
+        reason = policy.reason
         if any(isinstance(row, dict) and self.enchant_is_filled(row) for row in item.get("EnchantData", [])):
             reason += "; encantamentos serão removidos ao listar"
         return True, reason
@@ -2871,8 +3007,8 @@ class ProEditor:
             row["quality"] = self.item_quality_score(item)
             rows.append(row)
         rows.sort(key=lambda row: (row["quality"], normalize_search_text(self.item_name(row["item"]))), reverse=True)
-        capacity = self.free_slot_count(target)
-        return rows[: max(0, min(limit, capacity))]
+        self.last_market_pool = len(rows)
+        return rows[: max(0, min(limit, self.market_round_capacity(stash_page)))]
 
     def recycle_candidates(self, stash_page: int, limit: int, max_rarity: str = "LEGENDARY") -> list[dict]:
         max_rank = RARITY_RANK.get(str(max_rarity).upper(), RARITY_RANK["LEGENDARY"])
@@ -2909,7 +3045,8 @@ class ProEditor:
                 row["reason"] = f"duplicado; a melhor cópia de {self.item_name(row['item'])} foi preservada"
                 candidates.append(row)
         candidates.sort(key=lambda row: (row["quality"], normalize_search_text(self.item_name(row["item"]))))
-        capacity = self.free_slot_count(f"Armazem {stash_page}")
+        self.last_recycle_pool = len(candidates)
+        _unlocked, capacity = self.stash_page_capacity(stash_page)
         return candidates[: max(0, min(limit, capacity))]
 
     def apply_storage_queue(self, rows: list[dict], stash_page: int) -> int:
@@ -3003,16 +3140,16 @@ class ProEditor:
             messagebox.showinfo(APP_NAME, "Abra um save primeiro.")
             return
         win = tk.Toplevel(self.root)
-        win.title("Assistente guiado")
-        win.configure(bg="#0e1420")
-        self.configure_dialog(win, 900, 560, resizable=True)
-        win.minsize(820, 520)
-        tk.Label(win, text="ASSISTENTE GUIADO", fg="#ffffff", bg="#0e1420", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
+        win.title("Inteligência — equipamentos, desbloqueios e Mercado")
+        win.configure(bg=THEME["base"])
+        self.configure_dialog(win, 1120, 760, resizable=True)
+        win.minsize(980, 660)
+        tk.Label(win, text="CENTRAL DE INTELIGÊNCIA", fg=THEME["text"], bg=THEME["base"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(
             win,
             text="Escolha o que deseja fazer. O assistente primeiro analisa, depois mostra a prévia e só altera o save com sua confirmação.",
-            fg="#9fb0c8",
-            bg="#0e1420",
+            fg=THEME["muted"],
+            bg=THEME["base"],
         ).pack(anchor="w", padx=16, pady=(0, 10))
         tabs = ttk.Notebook(win)
         tabs.pack(fill=BOTH, expand=True, padx=14, pady=(0, 10))
@@ -3021,12 +3158,14 @@ class ProEditor:
         campaign = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         market = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         recycle = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
+        coins_tab = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         protection = ttk.Frame(tabs, style="Panel.TFrame", padding=14)
         tabs.add(overview, text="Começar")
         tabs.add(equipment, text="Equipamentos")
         tabs.add(campaign, text="Desbloqueios")
-        tabs.add(market, text="Preparar Mercado")
-        tabs.add(recycle, text="Separar reciclagem")
+        tabs.add(market, text="Mercado")
+        tabs.add(recycle, text="Reciclagem")
+        tabs.add(coins_tab, text="Moedas")
         tabs.add(protection, text="Segurança")
 
         common = self.data["player"].get("commonSaveData", {})
@@ -3043,8 +3182,8 @@ class ProEditor:
         tk.Label(
             overview,
             text=status_text,
-            fg="#d7e5f7" if not errors else "#ffb4a9",
-            bg="#17243a",
+            fg=THEME["text"] if not errors else THEME["danger"],
+            bg=THEME["card"],
             padx=12,
             pady=6,
             anchor="w",
@@ -3052,19 +3191,19 @@ class ProEditor:
         tk.Label(
             overview,
             text="COMO FUNCIONA     1  Escolha uma tarefa     →     2  Confira a análise     →     3  Confirme     →     4  Salve",
-            fg="#83d5b5",
-            bg="#111a29",
+            fg=THEME["success"],
+            bg=THEME["panel"],
             font=("Segoe UI", 9, "bold"),
         ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(3, 7))
 
         def action_card(row: int, column: int, title: str, description: str, limitation: str, button: str, command) -> None:
-            card = tk.Frame(overview, bg="#1a2638", bd=1, relief="solid")
+            card = tk.Frame(overview, bg=THEME["card"], bd=1, relief="solid")
             card.grid(row=row, column=column, padx=6, pady=6, sticky="nsew")
             card.columnconfigure(0, weight=1)
-            tk.Label(card, text=title, fg="#ffffff", bg="#1a2638", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(12, 6), pady=(8, 3))
+            tk.Label(card, text=title, fg=THEME["text"], bg=THEME["card"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(12, 6), pady=(8, 3))
             ttk.Button(card, text=button, command=command).grid(row=0, column=1, sticky="e", padx=(5, 10), pady=(6, 3))
-            tk.Label(card, text=description, fg="#cbd7e6", bg="#1a2638", wraplength=350, justify="left").grid(row=1, column=0, columnspan=2, sticky="w", padx=12)
-            tk.Label(card, text=f"Seguro: {limitation}", fg="#83d5b5", bg="#1a2638", wraplength=350, justify="left", font=("Segoe UI", 8)).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(4, 8))
+            tk.Label(card, text=description, fg=THEME["muted"], bg=THEME["card"], wraplength=430, justify="left").grid(row=1, column=0, columnspan=2, sticky="w", padx=12)
+            tk.Label(card, text=f"Seguro: {limitation}", fg=THEME["success"], bg=THEME["card"], wraplength=430, justify="left", font=("Segoe UI", 8)).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(4, 8))
 
         action_card(
             2, 0, "Melhorar os heróis",
@@ -3090,19 +3229,27 @@ class ProEditor:
             "não inventa fases e não altera progresso do servidor.",
             "Ver desbloqueios", lambda: tabs.select(campaign),
         )
-        ttk.Button(overview, text="Verificar a segurança do save", command=self.open_validation_dialog).grid(row=4, column=0, sticky="w", padx=6, pady=(9, 2))
+        coin_total = len(self.commemorative_coin_rows())
+        action_card(
+            4, 0, "Juntar moedas comemorativas",
+            f"Reúne as {coin_total} moeda(s) de aniversário espalhadas pelo save em uma única página do armazém."
+            if coin_total else "Procura moedas de aniversário espalhadas pelo inventário e pelo armazém.",
+            "só move moedas que já existem; nada é criado, convertido nem consumido.",
+            "Ver moedas", lambda: tabs.select(coins_tab),
+        )
+        ttk.Button(overview, text="Verificar a segurança do save", command=self.open_validation_dialog).grid(row=4, column=1, sticky="e", padx=6, pady=(9, 2))
         tk.Label(
             overview,
             text="Nada é gravado até você clicar em Salvar alterações.",
-            fg="#9fb0c8",
-            bg="#111a29",
-        ).grid(row=4, column=1, sticky="e", padx=6, pady=(9, 2))
+            fg=THEME["muted"],
+            bg=THEME["panel"],
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=(9, 2))
 
-        tk.Label(equipment, text="ANALISAR EQUIPAMENTOS E ENCANTAMENTOS", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        tk.Label(equipment, text="ANALISAR EQUIPAMENTOS E ENCANTAMENTOS", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
         tk.Label(
             equipment,
-            text="Compare o item equipado com a melhor opção disponível. A raridade vem primeiro; em empate, afinidade, tiers e quantidade de encantamentos decidem.",
-            fg="#c5d1e1", bg="#111a29", wraplength=820, justify="left",
+            text="Compare o item equipado com a melhor opção disponível. A nota combina raridade, nível conhecido, afinidade, tiers e ocupação dos encantamentos.",
+            fg=THEME["muted"], bg=THEME["panel"], wraplength=1020, justify="left",
         ).pack(anchor="w", pady=(5, 8))
         equipment_heroes = [hero for hero in self.data["player"].get("heroSaveDatas", []) if isinstance(hero, dict)]
         equipment_hero_labels = [HERO_NAMES.get(safe_int(hero.get("heroKey")), f"Herói {hero.get('heroKey')}") for hero in equipment_heroes]
@@ -3212,7 +3359,7 @@ class ProEditor:
         equipment_hero_combo.bind("<<ComboboxSelected>>", lambda _event: analyze_equipment())
         analyze_equipment()
 
-        tk.Label(campaign, text="LIBERAR RECURSOS LOCAIS", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        tk.Label(campaign, text="LIBERAR RECURSOS LOCAIS", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
         tk.Label(
             campaign,
             text=(
@@ -3221,9 +3368,9 @@ class ProEditor:
                 "A ação abaixo libera apenas tutoriais, heróis, pets, grupos de atributos e receitas já conhecidas pela versão do save. "
                 "Ela não inventa fases acima do conteúdo conhecido e não altera progresso de servidor."
             ),
-            fg="#c5d1e1",
-            bg="#111a29",
-            wraplength=820,
+            fg=THEME["muted"],
+            bg=THEME["panel"],
+            wraplength=1020,
             justify="left",
         ).pack(anchor="w", pady=(8, 14))
         campaign_changes = self.campaign_access_changes(apply=False)
@@ -3258,39 +3405,46 @@ class ProEditor:
             state="normal" if campaign_changes else "disabled",
         ).pack(anchor="e", pady=6)
 
-        market_page_var = StringVar(value="Armazém 7")
-        market_count_var = StringVar(value="20")
+        unlocked_pages = [page for page in range(1, STASH_PAGE_COUNT + 1) if self.stash_page_is_unlocked(page)]
+        default_queue_page = f"Armazém {unlocked_pages[-1]}" if unlocked_pages else STASH_DISPLAY_TARGETS[0]
+        market_page_var = StringVar(value=default_queue_page)
+        market_count_var = StringVar(value=str(self.configured_market_slots()))
         market_summary_var = StringVar(value="Clique em Analisar; nada será movido sem confirmação.")
         market_rows: list[dict] = []
-        tk.Label(market, text="PREPARAR ITENS PARA O MERCADO", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(market, text="PREPARAR ITENS PARA O MERCADO", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
         tk.Label(
             market,
             text="1. Escolha a aba.  2. Preencha com candidatos existentes.  3. Confira e organize. Itens desejados criados pelo editor ficam separados para uso local.",
-            fg="#83d5b5", bg="#111a29", justify="left",
+            fg=THEME["success"], bg=THEME["panel"], wraplength=1020, justify="left",
         ).pack(anchor="w", pady=(0, 9))
         market_bar = ttk.Frame(market, style="Panel.TFrame")
         market_bar.pack(fill=X)
         ttk.Label(market_bar, text="Destino").pack(side=LEFT)
         ttk.Combobox(market_bar, textvariable=market_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
-        ttk.Label(market_bar, text="Quantidade máxima").pack(side=LEFT)
-        ttk.Spinbox(market_bar, from_=1, to=66, textvariable=market_count_var, width=6).pack(side=LEFT, padx=6)
+        ttk.Label(market_bar, text="Slots nesta rodada").pack(side=LEFT)
+        ttk.Spinbox(market_bar, from_=1, to=max(1, self.configured_market_slots()), textvariable=market_count_var, width=6).pack(side=LEFT, padx=6)
         ttk.Button(market_bar, text="Avisos oficiais", command=lambda: webbrowser.open(MARKET_OFFICIAL_NEWS_URL)).pack(side=RIGHT)
+        ship = self.trade_ship_status()
         tk.Label(
             market,
-            text=(
-                f"Política verificada em {MARKET_POLICY_CHECKED_AT}: Cósmico, Divino e Celestial seguem restritos no último aviso oficial, "
-                "salvo a exceção indicada para Soulstones. Encantamentos são removidos pelo jogo ao listar. "
-                "O editor não consulta sua Steam e não garante aceitação nem preço."
-            ),
-            fg="#f5c66a",
-            bg="#111a29",
-            wraplength=820,
+            text=f"NAVIO DE TROCAS — {ship.reason}.",
+            fg=THEME["success"] if ship.unlocked and ship.known else THEME["warning"],
+            bg=THEME["panel"],
+            wraplength=1020,
             justify="left",
-        ).pack(anchor="w", pady=10)
+        ).pack(anchor="w", pady=(6, 2))
+        tk.Label(
+            market,
+            text=policy_summary(compact=True),
+            fg=THEME["muted"],
+            bg=THEME["panel"],
+            wraplength=1020,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
         market_tree = ttk.Treeview(market, columns=("name", "rarity", "type", "origin", "status"), show="headings", height=4)
         for key, label, width in [
-            ("name", "Item", 205), ("rarity", "Raridade", 90), ("type", "Tipo", 90),
-            ("origin", "Origem", 155), ("status", "Análise local", 280),
+            ("name", "Item", 250), ("rarity", "Raridade", 100), ("type", "Tipo", 100),
+            ("origin", "Origem", 185), ("status", "Análise local", 385),
         ]:
             market_tree.heading(key, text=label)
             market_tree.column(key, width=width, anchor="w")
@@ -3313,25 +3467,22 @@ class ProEditor:
                     "", END,
                     values=(self.item_name(item), rarity_label(self.item_rarity(item)), item_type_label(self.item_db(item).get("Type")), self.storage_label(row["source"], row["source_slot"]), row["reason"]),
                 )
-            free_slots = self.free_slot_count(f"Armazem {page}")
-            missing = max(0, free_slots - len(market_rows))
-            suffix = f" · {missing} espaço(s) sem candidato existente seguro" if missing else " · capacidade disponível atendida"
-            market_summary_var.set(f"{len(market_rows)} pré-candidato(s) seguro(s){suffix}.")
+            market_summary_var.set(self.queue_summary_text(page, len(market_rows), self.last_market_pool, "pré-candidato"))
             market_apply.configure(state="normal" if market_rows else "disabled")
 
         def fill_market_page() -> None:
             page = selected_page(market_page_var)
-            free_slots = self.free_slot_count(f"Armazem {page}")
-            if not free_slots:
-                messagebox.showinfo(APP_NAME, f"O Armazém {page} não possui espaços livres.")
+            capacity = self.market_round_capacity(page)
+            if not capacity:
+                messagebox.showinfo(APP_NAME, self.page_block_reason(page))
                 return
-            market_count_var.set(str(min(STASH_PAGE_SIZE, free_slots)))
+            market_count_var.set(str(capacity))
             analyze_market()
 
         def add_desired_market_items() -> None:
             page = selected_page(market_page_var)
             if not self.free_slot_count(f"Armazem {page}"):
-                messagebox.showinfo(APP_NAME, f"O Armazém {page} não possui espaços livres.")
+                messagebox.showinfo(APP_NAME, self.page_block_reason(page))
                 return
             self.open_create_item_dialog(f"Armazem {page}", local_market_notice=True)
 
@@ -3355,20 +3506,20 @@ class ProEditor:
 
         ttk.Button(market_actions, text="Analisar limite", command=analyze_market).pack(side=LEFT)
         ttk.Button(market_actions, text="Preencher com existentes", command=fill_market_page).pack(side=LEFT, padx=5)
-        ttk.Button(market_actions, text="Adicionar desejados (uso local)", command=add_desired_market_items).pack(side=LEFT)
+        ttk.Button(market_actions, text="Criar desejados (modo desprotegido)", command=add_desired_market_items).pack(side=LEFT)
         market_apply = ttk.Button(market_actions, text="2. Confirmar e organizar", style="Accent.TButton", command=apply_market, state="disabled")
         market_apply.pack(side=RIGHT)
 
-        recycle_page_var = StringVar(value="Armazém 6")
+        recycle_page_var = StringVar(value=default_queue_page)
         recycle_limit_var = StringVar(value="50")
         recycle_rarity_var = StringVar(value=RARITY_LABELS["LEGENDARY"])
         recycle_summary_var = StringVar(value="A fila nunca apaga nem converte itens automaticamente.")
         recycle_rows: list[dict] = []
-        tk.Label(recycle, text="SEPARAR DUPLICADOS PARA RECICLAGEM", fg="#ffffff", bg="#111a29", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(recycle, text="SEPARAR DUPLICADOS PARA RECICLAGEM", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
         tk.Label(
             recycle,
             text="1. Escolha os limites e analise.  2. Confira os duplicados.  3. Organize a fila. A conversão continua sendo feita no Cubo do jogo.",
-            fg="#83d5b5", bg="#111a29", justify="left",
+            fg=THEME["success"], bg=THEME["panel"], wraplength=1020, justify="left",
         ).pack(anchor="w", pady=(0, 9))
         recycle_bar = ttk.Frame(recycle, style="Panel.TFrame")
         recycle_bar.pack(fill=X)
@@ -3385,13 +3536,13 @@ class ProEditor:
                 "A análise seleciona somente equipamentos duplicados, preserva a melhor cópia, ignora itens bloqueados/caóticos e exclui tudo que foi criado ou alterado na sessão. "
                 "A síntese real deve ser feita manualmente no Cubo do jogo; o editor não promete transformar itens em valor de Mercado."
             ),
-            fg="#c5d1e1",
-            bg="#111a29",
-            wraplength=820,
+            fg=THEME["muted"],
+            bg=THEME["panel"],
+            wraplength=1020,
             justify="left",
         ).pack(anchor="w", pady=10)
         recycle_tree = ttk.Treeview(recycle, columns=("name", "rarity", "origin", "reason"), show="headings", height=4)
-        for key, label, width in [("name", "Item duplicado", 220), ("rarity", "Raridade", 95), ("origin", "Origem", 190), ("reason", "Motivo", 315)]:
+        for key, label, width in [("name", "Item duplicado", 260), ("rarity", "Raridade", 100), ("origin", "Origem", 215), ("reason", "Motivo", 380)]:
             recycle_tree.heading(key, text=label)
             recycle_tree.column(key, width=width, anchor="w")
         recycle_tree.pack(fill=BOTH, expand=True, pady=6)
@@ -3407,7 +3558,8 @@ class ProEditor:
             for row in recycle_rows:
                 item = row["item"]
                 recycle_tree.insert("", END, values=(self.item_name(item), rarity_label(self.item_rarity(item)), self.storage_label(row["source"], row["source_slot"]), row["reason"]))
-            recycle_summary_var.set(f"{len(recycle_rows)} duplicado(s) de baixa prioridade encontrado(s).")
+            recycle_summary_var.set(self.queue_summary_text(
+                selected_page(recycle_page_var), len(recycle_rows), self.last_recycle_pool, "duplicado"))
             recycle_apply.configure(state="normal" if recycle_rows else "disabled")
 
         def apply_recycle() -> None:
@@ -3429,16 +3581,97 @@ class ProEditor:
         recycle_apply = ttk.Button(recycle_actions, text="2. Confirmar e organizar", style="Accent.TButton", command=apply_recycle, state="disabled")
         recycle_apply.pack(side=RIGHT)
 
+        # ------------------------------------------------------------------
+        # Moedas comemorativas (Anniversary Coins 160001-160010)
+        # ------------------------------------------------------------------
+        coin_page_var = StringVar(value=default_queue_page)
+        coin_summary_var = StringVar(value="Clique em Localizar; nada é movido sem confirmação.")
+        coin_plan_holder: dict[str, object] = {"plan": None}
+        tk.Label(coins_tab, text="JUNTAR MOEDAS COMEMORATIVAS", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(
+            coins_tab,
+            text="1. Escolha a página de destino.  2. Localize as moedas.  3. Confirme para juntá-las. O editor só move o que já existe.",
+            fg=THEME["success"], bg=THEME["panel"], wraplength=1020, justify="left",
+        ).pack(anchor="w", pady=(0, 9))
+        coin_bar = ttk.Frame(coins_tab, style="Panel.TFrame")
+        coin_bar.pack(fill=X)
+        ttk.Label(coin_bar, text="Reunir em").pack(side=LEFT)
+        ttk.Combobox(coin_bar, textvariable=coin_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+        tk.Label(
+            coins_tab,
+            text=f"{coins.USAGE_NOTICE} {coins.MARKET_NOTICE}",
+            fg=THEME["muted"], bg=THEME["panel"], wraplength=1020, justify="left",
+        ).pack(anchor="w", pady=10)
+        coin_tree = ttk.Treeview(coins_tab, columns=("coin", "rarity", "quantity", "where"), show="headings", height=6)
+        for key, label, width in [
+            ("coin", "Moeda", 425), ("rarity", "Raridade", 105),
+            ("quantity", "Quantidade", 95), ("where", "Onde está", 320),
+        ]:
+            coin_tree.heading(key, text=label)
+            coin_tree.column(key, width=width, anchor="w")
+        coin_tree.pack(fill=BOTH, expand=True, pady=6)
+        ttk.Label(coins_tab, textvariable=coin_summary_var).pack(anchor="w", pady=4)
+        coin_actions = ttk.Frame(coins_tab, style="Panel.TFrame")
+        coin_actions.pack(fill=X)
+
+        def analyze_coins() -> None:
+            page = selected_page(coin_page_var)
+            coin_tree.delete(*coin_tree.get_children())
+            for group in self.commemorative_coin_groups():
+                coin_tree.insert(
+                    "", END,
+                    values=(
+                        f"{group.definition.display_name} — {group.definition.name}",
+                        rarity_label(group.definition.rarity),
+                        group.count,
+                        ", ".join(group.locations) or "sem local",
+                    ),
+                )
+            plan = self.build_commemorative_coin_plan(page)
+            coin_plan_holder["plan"] = plan
+            coin_summary_var.set(plan.summary())
+            coin_apply.configure(state="normal" if plan.rows_to_apply else "disabled")
+
+        def apply_coins() -> None:
+            plan = coin_plan_holder.get("plan")
+            if plan is None or not plan.rows_to_apply:
+                return
+            page = plan.stash_page
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"Mover {plan.moving} moeda(s) comemorativa(s) para o Armazém {page}?\n\n"
+                "Nenhuma moeda é criada, consumida ou convertida: elas apenas mudam de espaço no save.",
+            ):
+                return
+            applied = self.apply_storage_queue(list(plan.rows_to_apply), page)
+            if applied != plan.moving:
+                messagebox.showerror(APP_NAME, "O armazém mudou após a análise. Localize novamente.")
+                analyze_coins()
+                return
+            self.mark_dirty(f"Armazém {page}: {applied} moeda(s) comemorativa(s) reunidas.")
+            self.refresh_all()
+            analyze_coins()
+            messagebox.showinfo(
+                APP_NAME,
+                f"{applied} moeda(s) reunidas no Armazém {page}.\nUse Salvar alterações para gravar.",
+            )
+
+        ttk.Button(coin_actions, text="1. Localizar moedas", command=analyze_coins).pack(side=LEFT)
+        coin_apply = ttk.Button(coin_actions, text="2. Confirmar e juntar", style="Accent.TButton", command=apply_coins, state="disabled")
+        coin_apply.pack(side=RIGHT)
+        analyze_coins()
+
         protection_rows = [
-            ("Modo Protegido", "Ativo" if self.protected_mode_enabled() else "Desativado", "bloqueia gravação com o jogo aberto e limita lotes"),
+            ("Modo Protegido", "Ativo" if self.protected_mode_enabled() else "Desativado", "bloqueia jogo aberto, criação, duplicação e operações de maior risco"),
             ("Identidade Steam", "Protegida", "ownerSteamId e playerId não são editáveis"),
             ("Gravação", "Atômica + backup", "validação acontece antes da substituição"),
             ("Mercado", "Somente pré-análise", "não automatiza Steam, não altera elegibilidade e não oculta mudanças"),
+            ("Navio de Trocas", "Liberado" if ship.unlocked and ship.known else ("Desconhecido" if not ship.known else "Bloqueado"), ship.short_reason),
             ("Itens da sessão", "Isolados", "criados ou alterados não entram nas filas inteligentes"),
             ("Anti-banimento", "Não existe garantia", "o modo reduz erros; não burla detecção nem regras"),
         ]
         protection_tree = ttk.Treeview(protection, columns=("control", "status", "detail"), show="headings", height=6)
-        for key, label, width in [("control", "Controle", 180), ("status", "Estado", 145), ("detail", "O que faz", 495)]:
+        for key, label, width in [("control", "Controle", 195), ("status", "Estado", 150), ("detail", "O que faz", 605)]:
             protection_tree.heading(key, text=label)
             protection_tree.column(key, width=width, anchor="w")
         for row in protection_rows:
@@ -3447,9 +3680,9 @@ class ProEditor:
         tk.Label(
             protection,
             text="Importante: editar saves de um jogo conectado pode contrariar regras do jogo e resultar em sanções. O caminho mais seguro para Mercado e progressão é usar somente as funções oficiais dentro do jogo.",
-            fg="#f5c66a",
-            bg="#111a29",
-            wraplength=820,
+            fg=THEME["warning"],
+            bg=THEME["panel"],
+            wraplength=1020,
             justify="left",
         ).pack(anchor="w", pady=14)
         ttk.Button(protection, text="Abrir avisos oficiais do TBH", command=lambda: webbrowser.open(MARKET_OFFICIAL_NEWS_URL)).pack(anchor="e")
@@ -3510,7 +3743,7 @@ class ProEditor:
         win = tk.Toplevel(self.root)
         hname = HERO_NAMES.get(hero.get("heroKey"), f"Hero {hero.get('heroKey')}")
         win.title(f"Equipar {hname} - {SLOT_NAMES.get(slot_index, 'SLOT')}")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.geometry("900x560")
         query_var = StringVar(value="")
         rarity_var = StringVar(value=RARITY_FILTER_ALL)
@@ -3659,14 +3892,14 @@ class ProEditor:
             return
         win = tk.Toplevel(self.root)
         win.title(f"Equipar {self.item_name(item)}")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.geometry("680x500")
-        header = tk.Frame(win, bg="#181c29", height=44)
+        header = tk.Frame(win, bg=THEME["base"], height=44)
         header.pack(fill=X, padx=10, pady=(8, 0))
         header.pack_propagate(False)
-        header_icon = tk.Label(header, image=self.get_icon(item) or "", bg="#181c29", width=38)
+        header_icon = tk.Label(header, image=self.get_icon(item) or "", bg=THEME["base"], width=38)
         header_icon.pack(side=LEFT, padx=(0, 7))
-        tk.Label(header, text=self.item_name(item), fg="#ffffff", bg="#181c29", font=("Segoe UI", 10, "bold"), anchor="w").pack(side=LEFT, fill=X, expand=True)
+        tk.Label(header, text=self.item_name(item), fg=THEME["text"], bg=THEME["base"], font=("Segoe UI", 10, "bold"), anchor="w").pack(side=LEFT, fill=X, expand=True)
         tree = ttk.Treeview(win, columns=("hero", "slot", "current"), show="tree headings", height=16)
         tree.heading("#0", text="")
         tree.column("#0", width=44, minwidth=44, stretch=False, anchor="center")
@@ -3737,9 +3970,9 @@ class ProEditor:
     def open_move_dialog(self, item: dict) -> None:
         win = tk.Toplevel(self.root)
         win.title("Mover item")
-        win.configure(bg="#181c29")
+        win.configure(bg=THEME["base"])
         win.resizable(False, False)
-        icon_label = tk.Label(win, bg="#181c29", width=38, height=38)
+        icon_label = tk.Label(win, bg=THEME["base"], width=38, height=38)
         icon_label.pack(padx=20, pady=(16, 3))
 
         def refresh_icon() -> None:
@@ -3747,7 +3980,7 @@ class ProEditor:
 
         refresh_icon()
         self.register_icon_refresher(win, refresh_icon)
-        tk.Label(win, text=self.item_name(item), fg="#ffffff", bg="#181c29", font=("Segoe UI", 10, "bold")).pack(padx=20, pady=(3, 10))
+        tk.Label(win, text=self.item_name(item), fg=THEME["text"], bg=THEME["base"], font=("Segoe UI", 10, "bold")).pack(padx=20, pady=(3, 10))
         target_var = StringVar(value=DESTINATION_LABELS["Inventario"])
         ttk.Label(win, text="Destino").pack(anchor="w", padx=20)
         ttk.Combobox(
@@ -4036,7 +4269,7 @@ class ProEditor:
 
         win = tk.Toplevel(self.root)
         win.title("Adicionar item desejado — uso local" if local_market_notice else "Criar item")
-        win.configure(bg="#0e1420")
+        win.configure(bg=THEME["base"])
         self.configure_dialog(win, 900, 580, resizable=True)
         win.minsize(820, 520)
 
@@ -4081,7 +4314,7 @@ class ProEditor:
             tk.Label(
                 bar,
                 text="USO LOCAL: itens criados pelo editor não são candidatos confiáveis ao Mercado e podem ser recusados pelo jogo/Steam.",
-                fg="#f5c66a", bg="#111a29", justify="left", wraplength=820,
+                fg=THEME["warning"], bg=THEME["panel"], justify="left", wraplength=1020,
             ).grid(row=3, column=0, columnspan=8, sticky="w", pady=(10, 0))
         bar.columnconfigure(1, weight=1)
         bar.columnconfigure(3, weight=1)
@@ -4309,20 +4542,20 @@ class ProEditor:
     def open_item_editor(self, item: dict) -> None:
         win = tk.Toplevel(self.root)
         win.title(f"Editar item {item.get('UniqueId')}")
-        win.configure(bg="#0e1420")
+        win.configure(bg=THEME["base"])
         self.configure_dialog(win, 1040, 520, resizable=True)
         win.minsize(900, 480)
  
-        preview = tk.Frame(win, bg="#202638", bd=1, relief="solid")
+        preview = tk.Frame(win, bg=THEME["card"], bd=1, relief="solid")
         preview.grid(row=0, column=0, columnspan=2, sticky="ew", padx=14, pady=(14, 10))
         preview.columnconfigure(1, weight=1)
-        icon_label = tk.Label(preview, bg="#202638", width=72, height=72)
+        icon_label = tk.Label(preview, bg=THEME["card"], width=72, height=72)
         icon_label.grid(row=0, column=0, rowspan=4, padx=12, pady=10)
-        name_label = tk.Label(preview, text="", fg="#ffffff", bg="#202638", font=("Segoe UI", 12, "bold"))
+        name_label = tk.Label(preview, text="", fg=THEME["text"], bg=THEME["card"], font=("Segoe UI", 12, "bold"))
         name_label.grid(row=0, column=1, sticky="w", padx=8, pady=(10, 0))
-        meta_label = tk.Label(preview, text="", fg="#9fb0c8", bg="#202638", font=("Segoe UI", 9))
+        meta_label = tk.Label(preview, text="", fg=THEME["muted"], bg=THEME["card"], font=("Segoe UI", 9))
         meta_label.grid(row=1, column=1, sticky="w", padx=8)
-        stats_label = tk.Label(preview, text="", fg="#dbe7f7", bg="#202638", font=("Segoe UI", 9), wraplength=650, justify="left")
+        stats_label = tk.Label(preview, text="", fg=THEME["text"], bg=THEME["card"], font=("Segoe UI", 9), wraplength=650, justify="left")
         stats_label.grid(row=2, column=1, sticky="w", padx=8, pady=(4, 10))
 
         edit_query_var = StringVar(value="")
@@ -4367,7 +4600,7 @@ class ProEditor:
                 icon_label.configure(image=icon, text="")
                 icon_label.image = icon
             else:
-                icon_label.configure(image="", text="sem ícone", fg="#6f7d95", font=("Segoe UI", 9), width=10, height=4)
+                icon_label.configure(image="", text="sem ícone", fg=THEME["muted2"], font=("Segoe UI", 9), width=10, height=4)
                 icon_label.image = None
 
         field_labels = {
@@ -4377,7 +4610,7 @@ class ProEditor:
             "IsBlocked": "Item bloqueado",
         }
         for row, (key, value, choices) in enumerate(fields, start=2):
-            tk.Label(win, text=field_labels.get(key, key), fg="#9fb0c8", bg="#0e1420").grid(row=row, column=0, sticky="w", padx=14, pady=6)
+            tk.Label(win, text=field_labels.get(key, key), fg=THEME["muted"], bg=THEME["base"]).grid(row=row, column=0, sticky="w", padx=14, pady=6)
             display = str(value)
             if key == "ItemKey":
                 display = self.item_choice_for_key(safe_int(value))

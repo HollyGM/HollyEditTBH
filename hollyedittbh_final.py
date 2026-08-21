@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import subprocess
 import sys
-import tkinter as tk
 from pathlib import Path
 from tkinter import Tk, messagebox
 
 import tbh_save_editor as legacy
-from hollyedittbh_next import EnhancedProEditor, MARKET_CACHE_FILE
-from market_intelligence import POLICY_CHECKED_AT
-from market_snapshot_guard import fetch_market_snapshot_guarded
+from hollyedittbh_next import EnhancedProEditor
 from safe_persistence import normalize_path, write_save_transactionally
 from save_layer import ES3_PASSWORD, SaveFile as BaseSaveFile, es3_decrypt
 
@@ -67,7 +65,10 @@ def taskbar_hero_is_running_fail_safe() -> bool:
     system_root = os.environ.get("SystemRoot")
     if not system_root:
         return True
-    tasklist = os.path.join(system_root, "System32", "tasklist.exe")
+    # ntpath explícito: o caminho é sempre Windows, e os.path.join seguiria a
+    # convenção do host, produzindo barras trocadas quando o comportamento é
+    # exercitado fora do Windows.
+    tasklist = ntpath.join(system_root, "System32", "tasklist.exe")
     try:
         completed = subprocess.run(
             [tasklist, "/FI", "IMAGENAME eq TaskBarHero.exe", "/FO", "CSV", "/NH"],
@@ -191,100 +192,6 @@ class FinalProEditor(EnhancedProEditor):
             )
             return False
         return super().equip_item(hero, slot_index, item)
-
-    def market_round_capacity(self, stash_page: int) -> int:
-        actual = legacy.ProEditor.free_slot_count(self, f"Armazem {stash_page}")
-        return max(0, min(actual, self.configured_market_slots()))
-
-    def free_slot_count(self, target: str) -> int:
-        count = super().free_slot_count(target)
-        caller = sys._getframe(1).f_code.co_name
-        if caller == "fill_market_page" and target.startswith("Armazem "):
-            return min(count, self.configured_market_slots())
-        pending = getattr(self, "_market_summary_capacity", None)
-        if pending and target == pending[0]:
-            self._market_summary_capacity = None
-            return min(count, pending[1])
-        return count
-
-    def market_candidates(self, stash_page: int, limit: int) -> list[dict]:
-        rows = super().market_candidates(stash_page, limit)
-        target = f"Armazem {stash_page}"
-        self._market_summary_capacity = (target, self.market_round_capacity(stash_page))
-        return rows
-
-    def _market_refresh_background(self) -> None:
-        try:
-            snapshot = fetch_market_snapshot_guarded(MARKET_CACHE_FILE)
-            self.intel_jobs.put(("market", snapshot))
-        except Exception as exc:
-            self.intel_jobs.put(("status", f"Mercado Steam: {exc}"))
-
-    def _walk_widgets(self, widget: tk.Misc):
-        yield widget
-        try:
-            children = widget.winfo_children()
-        except tk.TclError:
-            children = []
-        for child in children:
-            yield from self._walk_widgets(child)
-
-    def _update_protection_tree(self, widget: tk.Misc) -> None:
-        try:
-            if widget.winfo_class() != "Treeview":
-                return
-            for iid in widget.get_children():
-                values = list(widget.item(iid, "values"))
-                if values and str(values[0]) == "Modo Protegido" and len(values) >= 3:
-                    values[2] = "bloqueia jogo aberto, criação, duplicação e operações de maior risco"
-                    widget.item(iid, values=values)
-        except (tk.TclError, AttributeError):
-            return
-
-    def open_smart_center(self) -> None:
-        before = set(self.root.winfo_children())
-        super().open_smart_center()
-        self.root.update_idletasks()
-        market_slots = self.configured_market_slots()
-
-        for child in self.root.winfo_children():
-            if child in before or not isinstance(child, tk.Toplevel):
-                continue
-            for widget in self._walk_widgets(child):
-                self._update_protection_tree(widget)
-                try:
-                    text = str(widget.cget("text"))
-                except (tk.TclError, AttributeError):
-                    text = ""
-
-                if text == "Quantidade máxima":
-                    try:
-                        widget.configure(text="Slots nesta rodada")
-                    except tk.TclError:
-                        pass
-                elif text == "Adicionar desejados (uso local)":
-                    try:
-                        widget.configure(text="Criar desejados (modo desprotegido)")
-                    except tk.TclError:
-                        pass
-                elif "O editor não consulta sua Steam" in text:
-                    replacement = (
-                        f"Política-base oficial confirmada em {POLICY_CHECKED_AT}: equipamentos Cósmico, Divino e Celestial "
-                        "continuam fora de novas recomendações enquanto não houver anúncio oficial posterior de liberação, "
-                        "com exceção conhecida para Soulstones. O editor não acessa conta ou login Steam: usa apenas snapshot "
-                        "público e cacheado do Community Market como referência; aceitação e preço finais pertencem ao jogo/Steam."
-                    )
-                    try:
-                        widget.configure(text=replacement)
-                    except tk.TclError:
-                        pass
-
-                try:
-                    if widget.winfo_class() == "TSpinbox" and str(widget.get()) == "20":
-                        widget.configure(from_=1, to=market_slots)
-                        widget.set(str(market_slots))
-                except (tk.TclError, AttributeError):
-                    pass
 
     def show_about(self) -> None:
         messagebox.showinfo(

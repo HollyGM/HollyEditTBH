@@ -261,20 +261,34 @@ class BuildReproducibilityTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", workflow)
         self.assertRegex(workflow, r"permissions\s*:\s*\r?\n\s*contents\s*:\s*read\b")
 
-    def test_version_is_consistent_for_332(self):
+    def test_version_is_consistent_across_every_artifact(self):
+        """Um bump de versão passou a ser uma linha em app_meta.py.
+
+        As asserções derivam de APP_VERSION em vez de repetirem o número: antes
+        subir a versão exigia editar seis literais neste teste, e esquecer um
+        deles quebrava o gate de distribuição só no runner Windows."""
         base = Path(__file__).resolve().parent
         version_info = (base / "version_info.txt").read_text(encoding="utf-8")
         workflow = (base / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        parts = APP_VERSION.split(".")
 
-        self.assertEqual(APP_VERSION, "3.3.2")
-        self.assertIn("FileVersion', '3.3.2'", version_info)
-        self.assertIn("ProductVersion', '3.3.2'", version_info)
-        self.assertIn("filevers=(3, 3, 2, 0)", version_info)
-        self.assertIn("HollyEditTBH-v3.3.2-windows", workflow)
-        self.assertRegex(workflow, r"\$allowedVersions\s*=\s*@\('3\.3\.2',\s*'3\.3\.2\.0'\)")
+        self.assertRegex(APP_VERSION, r"^\d+\.\d+\.\d+$")
+        self.assertIn(f"FileVersion', '{APP_VERSION}'", version_info)
+        self.assertIn(f"ProductVersion', '{APP_VERSION}'", version_info)
+        self.assertIn(f"filevers=({', '.join(parts)}, 0)", version_info)
+        self.assertIn(f"prodvers=({', '.join(parts)}, 0)", version_info)
+        self.assertIn(f"HollyEditTBH-v{APP_VERSION}-windows", workflow)
+        self.assertIn(f"@('{APP_VERSION}', '{APP_VERSION}.0')", workflow)
         self.assertIn("$allowedVersions -notcontains $fileVersion", workflow)
         self.assertIn("$allowedVersions -notcontains $productVersion", workflow)
-        self.assertNotIn("-notlike '3.3.2*'", workflow)
+        self.assertNotIn("-notlike", workflow)
+
+    def test_ci_runs_every_test_module_in_the_repository(self):
+        """Uma suíte nova só protege o produto se o CI de fato a executar."""
+        base = Path(__file__).resolve().parent
+        workflow = (base / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        for module in sorted(path.name for path in base.glob("test_*.py")):
+            self.assertIn(module, workflow, f"{module} não é executado pelo CI")
 
 
 if __name__ == "__main__":
