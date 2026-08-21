@@ -746,14 +746,19 @@ class ProEditor:
         style.map("Treeview.Heading", background=[("active", THEME["selected"])])
 
     def configure_dialog(self, win: tk.Toplevel, width: int, height: int, resizable: bool = False) -> None:
-        """Mantém janelas auxiliares centralizadas e visíveis em qualquer escala do Windows."""
+        """Mantém janelas auxiliares centralizadas e visíveis em qualquer escala do Windows.
+
+        O tamanho pedido é um teto, não uma imposição: em telas menores a janela
+        encolhe para caber em vez de empurrar a barra de ações para fora."""
         win.transient(self.root)
         win.state("normal")
         win.resizable(resizable, resizable)
         self.root.update_idletasks()
         display_scale = display_scale_factor()
-        screen_width = max(width, round(self.root.winfo_screenwidth() / display_scale))
-        screen_height = max(height, round(self.root.winfo_screenheight() / display_scale))
+        screen_width = max(320, round(self.root.winfo_screenwidth() / display_scale))
+        screen_height = max(320, round(self.root.winfo_screenheight() / display_scale))
+        width = min(width, screen_width - 16)
+        height = min(height, screen_height - 48)
         x = max(8, (screen_width - width) // 2)
         y = max(8, (screen_height - height) // 2)
         win.geometry(f"{width}x{height}+{x}+{y}")
@@ -3143,7 +3148,8 @@ class ProEditor:
         win.title("Inteligência — equipamentos, desbloqueios e Mercado")
         win.configure(bg=THEME["base"])
         self.configure_dialog(win, 1120, 760, resizable=True)
-        win.minsize(980, 660)
+        win.update_idletasks()
+        win.minsize(min(980, win.winfo_width()), min(660, win.winfo_height()))
         tk.Label(win, text="CENTRAL DE INTELIGÊNCIA", fg=THEME["text"], bg=THEME["base"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(
             win,
@@ -3510,7 +3516,10 @@ class ProEditor:
         market_apply = ttk.Button(market_actions, text="2. Confirmar e organizar", style="Accent.TButton", command=apply_market, state="disabled")
         market_apply.pack(side=RIGHT)
 
-        recycle_page_var = StringVar(value=default_queue_page)
+        # A fila de reciclagem usa a penúltima página liberada para não disputar
+        # o mesmo destino da fila de Mercado quando as duas são preparadas.
+        recycle_default_page = f"Armazém {unlocked_pages[-2]}" if len(unlocked_pages) > 1 else default_queue_page
+        recycle_page_var = StringVar(value=recycle_default_page)
         recycle_limit_var = StringVar(value="50")
         recycle_rarity_var = StringVar(value=RARITY_LABELS["LEGENDARY"])
         recycle_summary_var = StringVar(value="A fila nunca apaga nem converte itens automaticamente.")
