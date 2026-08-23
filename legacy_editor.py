@@ -3237,10 +3237,10 @@ class ProEditor:
         )
         coin_total = len(self.commemorative_coin_rows())
         action_card(
-            4, 0, "Juntar moedas comemorativas",
-            f"Reúne as {coin_total} moeda(s) de aniversário espalhadas pelo save em uma única página do armazém."
-            if coin_total else "Procura moedas de aniversário espalhadas pelo inventário e pelo armazém.",
-            "só move moedas que já existem; nada é criado, convertido nem consumido.",
+            4, 0, "Moedas comemorativas",
+            f"Reúne as {coin_total} moeda(s) de aniversário espalhadas pelo save numa página do armazém, ou cria moedas novas direto nele."
+            if coin_total else "Organize moedas de aniversário existentes ou crie moedas novas direto no armazém.",
+            "juntar só move o que já existe; criar gera itens novos, sempre com sua confirmação.",
             "Ver moedas", lambda: tabs.select(coins_tab),
         )
         ttk.Button(overview, text="Verificar a segurança do save", command=self.open_validation_dialog).grid(row=4, column=1, sticky="e", padx=6, pady=(9, 2))
@@ -3669,6 +3669,55 @@ class ProEditor:
         coin_apply = ttk.Button(coin_actions, text="2. Confirmar e juntar", style="Accent.TButton", command=apply_coins, state="disabled")
         coin_apply.pack(side=RIGHT)
         analyze_coins()
+
+        # ------------------------------------------------------------------
+        # Adicionar moedas comemorativas ao armazém (cria itens novos)
+        # ------------------------------------------------------------------
+        ttk.Separator(coins_tab, orient="horizontal").pack(fill=X, pady=(16, 12))
+        coin_choice_labels = [
+            f"{definition.display_name} ({rarity_label(definition.rarity)})"
+            for definition in coins.COIN_DEFINITIONS
+        ]
+        coin_choice_by_label = dict(zip(coin_choice_labels, coins.COIN_DEFINITIONS))
+        coin_add_choice_var = StringVar(value=coin_choice_labels[0])
+        coin_add_quantity_var = StringVar(value="1")
+        coin_add_page_var = StringVar(value=default_queue_page)
+        tk.Label(coins_tab, text="ADICIONAR MOEDA AO ARMAZÉM", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(
+            coins_tab,
+            text="Cria cópias novas da moeda escolhida direto no armazém. Diferente de juntar, esta ação cria itens — sempre com sua confirmação.",
+            fg=THEME["warning"], bg=THEME["panel"], wraplength=1020, justify="left",
+        ).pack(anchor="w", pady=(0, 9))
+        coin_add_bar = ttk.Frame(coins_tab, style="Panel.TFrame")
+        coin_add_bar.pack(fill=X)
+        ttk.Label(coin_add_bar, text="Moeda").pack(side=LEFT)
+        ttk.Combobox(coin_add_bar, textvariable=coin_add_choice_var, values=coin_choice_labels, state="readonly", width=34).pack(side=LEFT, padx=(6, 14))
+        ttk.Label(coin_add_bar, text="Quantidade").pack(side=LEFT)
+        ttk.Spinbox(coin_add_bar, from_=1, to=999, textvariable=coin_add_quantity_var, width=6).pack(side=LEFT, padx=(6, 14))
+        ttk.Label(coin_add_bar, text="Armazém").pack(side=LEFT)
+        ttk.Combobox(coin_add_bar, textvariable=coin_add_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+
+        def add_coin() -> None:
+            definition = coin_choice_by_label.get(coin_add_choice_var.get())
+            if definition is None:
+                return
+            if not self.db_by_key.get(str(definition.item_key)):
+                messagebox.showinfo(APP_NAME, "Atualize o catálogo de itens primeiro.")
+                return
+            quantity = max(1, safe_int(coin_add_quantity_var.get(), 1))
+            page = selected_page(coin_add_page_var)
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"Criar {quantity} moeda(s) \"{definition.display_name}\" no Armazém {page}?\n\n"
+                "Itens criados pelo editor ficam isolados das filas de Mercado nesta sessão.",
+            ):
+                return
+            if self.create_item(definition.item_key, quantity, f"Armazem {page}", enchanted=False):
+                analyze_coins()
+
+        coin_add_actions = ttk.Frame(coins_tab, style="Panel.TFrame")
+        coin_add_actions.pack(fill=X, pady=(8, 0))
+        ttk.Button(coin_add_actions, text="Adicionar ao armazém", style="Accent.TButton", command=add_coin).pack(side=RIGHT)
 
         protection_rows = [
             ("Modo Protegido", "Ativo" if self.protected_mode_enabled() else "Desativado", "bloqueia jogo aberto, criação, duplicação e operações de maior risco"),

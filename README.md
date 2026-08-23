@@ -34,6 +34,8 @@ A aba **Moedas** da Central de Inteligência localiza todas as cópias espalhada
 - recusa uma página bloqueada e diz que ela está bloqueada;
 - passa pela mesma confirmação e pela mesma gravação transacional das demais filas.
 
+A mesma aba também permite **criar** moedas: escolha a moeda, a quantidade e a página do armazém e confirme. Essa ação usa o fluxo genérico de criação de itens do editor (`ProEditor.create_item`) — o mesmo caminho testado e usado pelo restante do editor —, então, ao contrário da fila de reunião acima, ela cria itens de verdade no save. Por isso pede confirmação explícita antes de aplicar, respeita o limite de lote do Modo Protegido e a moeda criada entra na sessão como "criada", ficando fora das filas de pré-candidato a Mercado, igual a qualquer outro item criado pelo editor.
+
 O registro das dez moedas vive em `commemorative_coins.py` e é conferido contra `tbh_items_cache.json` por teste automatizado.
 
 ## Recursos principais
