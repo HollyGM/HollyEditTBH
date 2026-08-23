@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-from pathlib import Path
 import queue
 import threading
 import time
@@ -90,7 +89,11 @@ class EnhancedProEditor(legacy.ProEditor):
                     continue
                 rarity = reverse.get(str(values[3]), str(values[3]).upper())
                 if rarity in RARITY_FOREGROUNDS:
-                    tree.item(iid, tags=(f"rarity_{rarity}",))
+                    # tree.item(tags=...) substitui a tupla inteira; preservar as
+                    # tags existentes (ex.: "odd"/"even" do zebra-striping) em vez
+                    # de sobrescrevê-las com só a tag de raridade.
+                    base_tags = tuple(t for t in tree.item(iid, "tags") if not t.startswith("rarity_"))
+                    tree.item(iid, tags=base_tags + (f"rarity_{rarity}",))
 
     def refresh_all(self) -> None:
         super().refresh_all()

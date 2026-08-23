@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping, Sequence
 
+from intelligence_engine import RARITY_RANK as _RARITY_ORDER
+
 FIRST_COIN_KEY = 160001
 LAST_COIN_KEY = 160010
 
@@ -213,12 +215,6 @@ def build_coin_plan(
     plan.movable.sort(key=_coin_sort_key)
     plan.already_there.sort(key=_coin_sort_key)
     return plan
-
-
-_RARITY_ORDER = {
-    "COMMON": 1, "UNCOMMON": 2, "RARE": 3, "LEGENDARY": 4, "IMMORTAL": 5,
-    "ARCANA": 6, "BEYOND": 7, "CELESTIAL": 8, "DIVINE": 9, "COSMIC": 10,
-}
 
 
 def _coin_sort_key(row: Mapping) -> tuple[int, int, int]:

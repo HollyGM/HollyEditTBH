@@ -22,11 +22,11 @@ def minimal_player():
     }
 
 
-def storage_slot(index, uid=0, stash=False):
+def storage_slot(index, uid=0, stash=False, unlocked=True):
     return {
         "Index": index,
         "ItemUniqueId": uid,
-        "IsUnLock" if stash else "IsUnlock": True,
+        "IsUnLock" if stash else "IsUnlock": unlocked,
         "IsUnlockedByRune": False,
     }
 

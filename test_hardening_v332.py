@@ -174,6 +174,63 @@ class TransactionalSaveTests(unittest.TestCase):
             self.assertNotEqual(second_source, save._source_sha256)
             self.assertEqual(BaseSaveFile.load(save.last_backup_path).player["marker"], "v2")
 
+    def test_save_as_over_an_existing_different_file_uses_the_hardened_replace(self):
+        """expected_sha256 é None ao salvar num caminho diferente do carregado;
+        esse ramo não pode pular a troca reforçada só por não ter origem
+        esperada para comparar."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            loaded_path = Path(temp_dir) / "SaveFile_Live.es3"
+            loaded_path.write_bytes(save_bytes("loaded"))
+            save = VerifiedSaveFile.load(loaded_path)
+            save.player["marker"] = "editor"
+
+            other_path = Path(temp_dir) / "SaveFile_Other.es3"
+            other_path.write_bytes(save_bytes("other-previous"))
+
+            calls = []
+            real_replace = safe_persistence._replace_existing_with_backup
+
+            def spy(target, replacement, backup_path):
+                calls.append(Path(target))
+                return real_replace(target, replacement, backup_path)
+
+            with patch("safe_persistence._replace_existing_with_backup", side_effect=spy):
+                save.save(other_path, backup=True)
+
+            self.assertEqual(calls, [other_path])
+            self.assertEqual(BaseSaveFile.load(other_path).player["marker"], "editor")
+            self.assertIsNotNone(save.last_backup_path)
+            self.assertEqual(BaseSaveFile.load(save.last_backup_path).player["marker"], "other-previous")
+
+    def test_save_as_without_backup_does_not_keep_the_replaced_copy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            loaded_path = Path(temp_dir) / "SaveFile_Live.es3"
+            loaded_path.write_bytes(save_bytes("loaded"))
+            save = VerifiedSaveFile.load(loaded_path)
+
+            other_path = Path(temp_dir) / "SaveFile_Other.es3"
+            other_path.write_bytes(save_bytes("other-previous"))
+
+            save.save(other_path, backup=False)
+
+            self.assertIsNone(save.last_backup_path)
+            self.assertEqual(BaseSaveFile.load(other_path).player["marker"], "loaded")
+            self.assertEqual(sorted(p.name for p in Path(temp_dir).iterdir()), ["SaveFile_Live.es3", "SaveFile_Other.es3"])
+
+    def test_save_as_to_a_brand_new_path_still_works_without_replacefilew(self):
+        """ReplaceFileW exige destino existente; caminho novo continua usando os.replace."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            loaded_path = Path(temp_dir) / "SaveFile_Live.es3"
+            loaded_path.write_bytes(save_bytes("loaded"))
+            save = VerifiedSaveFile.load(loaded_path)
+            save.player["marker"] = "editor"
+
+            new_path = Path(temp_dir) / "SaveFile_New.es3"
+            self.assertFalse(new_path.exists())
+            save.save(new_path, backup=True)
+            self.assertEqual(BaseSaveFile.load(new_path).player["marker"], "editor")
+            self.assertIsNone(save.last_backup_path)
+
     def test_unicode_path_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir) / "Usuário José 漢字"
