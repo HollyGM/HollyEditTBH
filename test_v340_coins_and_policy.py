@@ -357,6 +357,17 @@ class SlotCompatibilityTests(unittest.TestCase):
         self.assertFalse(editor.item_compatible_with_slot(item, hero, 8))
 
 
+class RarityRankSingleSourceTests(unittest.TestCase):
+    def test_rarity_rank_has_a_single_definition(self):
+        """RARITY_RANK vivia como três literais independentes (legacy_editor,
+        intelligence_engine, commemorative_coins._RARITY_ORDER) com os mesmos
+        valores, mas sem fonte única — o mesmo padrão que já causou o bug real
+        de SLOT_NAMES ter duas tabelas divergentes. As três referências agora
+        devem apontar para o mesmo dict de intelligence_engine."""
+        self.assertEqual(legacy_editor.RARITY_RANK, intelligence.RARITY_RANK)
+        self.assertEqual(coins._RARITY_ORDER, intelligence.RARITY_RANK)
+
+
 class MarketPolicySingleSourceTests(unittest.TestCase):
     def test_the_editor_shows_one_policy_date(self):
         self.assertEqual(legacy_editor.MARKET_POLICY_CHECKED_AT, market_policy.POLICY_CHECKED_AT)
@@ -440,6 +451,23 @@ class SingleEntryPointTests(unittest.TestCase):
         import hollyedittbh_next
 
         self.assertFalse(hasattr(hollyedittbh_next, "main"))
+
+    def test_the_final_layer_wires_in_the_hardened_save_file(self):
+        """legacy_editor.SaveFile precisa virar VerifiedSaveFile ao importar a camada final.
+
+        save_layer.SaveFile.save() não usa ReplaceFileW nem reverifica hash
+        pós-escrita; só VerifiedSaveFile.save() (via write_save_transactionally)
+        tem essas proteções. legacy_editor.py resolve o nome global SaveFile em
+        tempo de chamada (import direto, sem alias), então a aplicação real só
+        fica protegida se essa substituição realmente acontecer ao importar
+        hollyedittbh_final — duas implementações divergentes de gravação já
+        causaram o mesmo tipo de regressão silenciosa neste projeto antes."""
+        import hollyedittbh_final
+        import save_layer
+
+        self.assertIs(legacy_editor.SaveFile, hollyedittbh_final.VerifiedSaveFile)
+        self.assertTrue(issubclass(hollyedittbh_final.VerifiedSaveFile, save_layer.SaveFile))
+        self.assertIsNot(hollyedittbh_final.VerifiedSaveFile.save, save_layer.SaveFile.save)
 
     def test_the_final_layer_no_longer_inspects_its_caller(self):
         source = (BASE / "hollyedittbh_final.py").read_text(encoding="utf-8")

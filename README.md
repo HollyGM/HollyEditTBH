@@ -56,7 +56,7 @@ O registro das dez moedas vive em `commemorative_coins.py` e é conferido contra
 - **Central de Inteligência** com análise e prévia antes das alterações automáticas;
 - pontuação contínua de equipamentos por raridade, nível conhecido, afinidade do herói, tiers e ocupação dos encantamentos;
 - perfis de heróis em `hero_profiles.json`, explicitamente heurísticos e calibráveis;
-- otimização global exata: um item não é reutilizado e nenhum herói é rebaixado para beneficiar outro;
+- alocação gulosa por ordem de heróis: um item não é reutilizado e nenhum herói é rebaixado para beneficiar outro, mas a ordem dos heróis decide quem fica com um item disputado — não é um ótimo global calculado entre todos;
 - compatibilidade correta para amuleto, brinco, anel e abraçadeira;
 - fila conservadora de candidatos ao Mercado usando somente itens já existentes e não modificados;
 - snapshot público e cacheado do Steam Community Market usado apenas como referência de preço;

@@ -206,14 +206,25 @@ def write_save_transactionally(
 
     try:
         if expected_sha256 is None:
-            backup_path = None
-            if backup and target.exists():
-                backup_path = _unique_path(target, "backup", visible_backup=True)
-                shutil.copy2(target, backup_path)
-            # Compatibilidade com a gravação de um novo caminho e com as
-            # regressões históricas de falha de os.replace.
-            save_layer.os.replace(temp_path, target)
+            if not target.exists():
+                # ReplaceFileW exige que o destino já exista; não há nada para
+                # substituir, então não há caminho reforçado possível aqui.
+                save_layer.os.replace(temp_path, target)
+                temp_path = None
+                return str(target), None, blob_sha256
+
+            # Destino existe mas não é a origem carregada (ex.: salvar em um
+            # caminho novo por cima de um arquivo já existente): ainda dá para
+            # usar a troca reforçada do Windows em vez do copy2+replace simples.
+            backup_path = _unique_path(target, "backup", visible_backup=backup)
+            _replace_existing_with_backup(target, temp_path, backup_path)
             temp_path = None
+            if not backup:
+                try:
+                    backup_path.unlink()
+                except OSError:
+                    pass
+                backup_path = None
             return str(target), backup_path, blob_sha256
 
         _assert_expected_source(target, expected_sha256)

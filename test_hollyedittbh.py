@@ -18,6 +18,7 @@ from tbh_save_editor import (
     hero_portrait_candidates,
     item_matches_filters,
     normalize_search_text,
+    safe_int,
     validate_dump_structure,
 )
 
@@ -67,11 +68,11 @@ def headless_editor(data, database):
     return editor
 
 
-def storage_slot(index, uid=0, stash=False):
+def storage_slot(index, uid=0, stash=False, unlocked=True):
     return {
         "Index": index,
         "ItemUniqueId": uid,
-        "IsUnLock" if stash else "IsUnlock": True,
+        "IsUnLock" if stash else "IsUnlock": unlocked,
         "IsUnlockedByRune": False,
     }
 
@@ -379,6 +380,163 @@ class DataValidationTests(unittest.TestCase):
         ) as error:
             editor.save_dump()
         error.assert_called_once()
+
+
+class ItemLifecycleTests(unittest.TestCase):
+    """delete_item, move_item e o caminho de sucesso de equip_item/unequip_slot
+    não tinham nenhum teste próprio — só o bloqueio do Modo Protegido era
+    testado para equip_item. São exatamente as operações que tocam UniqueId e
+    slots diretamente e podem apagar ou duplicar um item de verdade."""
+
+    AMULET_KEY = 601001  # prefixo "60": espaço 6 (amuleto) do herói 101
+
+    def build(self, *, inventory_slots=4, stash_slots=4, hero_key=101):
+        database = [{"ItemKey": str(self.AMULET_KEY), "Name": "Amuleto de teste", "Rarity": "RARE", "Type": "GEAR", "StatTypes": []}]
+        player = minimal_player()
+        player["heroSaveDatas"] = [{"heroKey": hero_key, "equippedItemIds": [0] * 10}]
+        player["inventorySaveDatas"] = [storage_slot(i) for i in range(inventory_slots)]
+        player["stashSaveDatas"] = [storage_slot(i, stash=True) for i in range(stash_slots)]
+        return headless_editor({"account": {}, "player": player}, database)
+
+    def make_amulet(self, editor, uid, target="Inventario"):
+        item = editor.new_item(self.AMULET_KEY, enchanted=False)
+        item["UniqueId"] = uid
+        editor.data["player"]["itemSaveDatas"].append(item)
+        editor.items.append(item)
+        editor.items_by_uid[uid] = item
+        if target is not None:
+            editor.place_item(uid, target)
+        return item
+
+    def test_delete_item_removes_it_everywhere(self):
+        editor = self.build()
+        item = self.make_amulet(editor, 501)
+        with patch("tbh_save_editor.messagebox.askyesno", return_value=True):
+            self.assertTrue(editor.delete_item(item))
+        self.assertNotIn(item, editor.data["player"]["itemSaveDatas"])
+        self.assertNotIn(501, editor.items_by_uid)
+        self.assertEqual(
+            [safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["inventorySaveDatas"]],
+            [0] * 4,
+        )
+
+    def test_delete_item_cancelled_changes_nothing(self):
+        editor = self.build()
+        item = self.make_amulet(editor, 502)
+        with patch("tbh_save_editor.messagebox.askyesno", return_value=False):
+            self.assertFalse(editor.delete_item(item))
+        self.assertIn(item, editor.data["player"]["itemSaveDatas"])
+        self.assertIn(502, editor.items_by_uid)
+
+    def test_move_item_relocates_between_inventory_and_stash(self):
+        editor = self.build()
+        self.make_amulet(editor, 503, target="Inventario")
+        item = editor.items_by_uid[503]
+        self.assertTrue(editor.move_item(item, "Armazem 1"))
+        inv_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["inventorySaveDatas"]}
+        stash_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["stashSaveDatas"]}
+        self.assertNotIn(503, inv_uids)
+        self.assertIn(503, stash_uids)
+        self.assertEqual(len(editor.data["player"]["itemSaveDatas"]), 1)
+
+    def test_move_item_refuses_a_full_destination_and_changes_nothing(self):
+        editor = self.build(stash_slots=1)
+        editor.data["player"]["stashSaveDatas"][0]["ItemUniqueId"] = 999
+        self.make_amulet(editor, 504, target="Inventario")
+        item = editor.items_by_uid[504]
+        with patch("tbh_save_editor.messagebox.showerror") as error:
+            self.assertFalse(editor.move_item(item, "Armazem 1"))
+        error.assert_called_once()
+        self.assertEqual(safe_int(editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"]), 504)
+
+    def test_equip_item_swaps_and_parks_the_previous_item_in_inventory(self):
+        editor = self.build()
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 601, target=None)
+        hero["equippedItemIds"][6] = 601
+        self.make_amulet(editor, 602, target="Inventario")
+        new_item = editor.items_by_uid[602]
+
+        self.assertTrue(editor.equip_item(hero, 6, new_item))
+        self.assertEqual(hero["equippedItemIds"][6], 602)
+        inv_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["inventorySaveDatas"]}
+        self.assertIn(601, inv_uids)
+        self.assertNotIn(602, inv_uids)
+
+    def test_equip_item_falls_back_to_stash_when_inventory_is_full(self):
+        """Antes, equipar só considerava o Inventário e falhava mesmo com o Armazém livre."""
+        editor = self.build(inventory_slots=1, stash_slots=2)
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 612, target=None)
+        hero["equippedItemIds"][6] = 612
+        self.make_amulet(editor, 611, target="Armazem 1")
+        new_item = editor.items_by_uid[611]
+        editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"] = 999
+
+        self.assertTrue(editor.equip_item(hero, 6, new_item))
+        self.assertEqual(hero["equippedItemIds"][6], 611)
+        stash_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["stashSaveDatas"]}
+        self.assertIn(612, stash_uids)
+
+    def test_equip_item_fails_cleanly_when_no_space_anywhere(self):
+        editor = self.build(inventory_slots=1, stash_slots=1)
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 622, target=None)
+        hero["equippedItemIds"][6] = 622
+        self.make_amulet(editor, 621, target="Armazem 1")
+        new_item = editor.items_by_uid[621]
+        editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"] = 999
+
+        with patch("tbh_save_editor.messagebox.showerror") as error:
+            self.assertFalse(editor.equip_item(hero, 6, new_item))
+        error.assert_called_once()
+        self.assertEqual(hero["equippedItemIds"][6], 622)
+
+    def test_unequip_slot_returns_item_to_inventory(self):
+        editor = self.build()
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 631, target=None)
+        hero["equippedItemIds"][6] = 631
+
+        self.assertTrue(editor.unequip_slot(hero, 6))
+        self.assertEqual(hero["equippedItemIds"][6], 0)
+        inv_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["inventorySaveDatas"]}
+        self.assertIn(631, inv_uids)
+
+    def test_unequip_slot_falls_back_to_stash_when_inventory_is_full(self):
+        editor = self.build(inventory_slots=1, stash_slots=1)
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 641, target=None)
+        hero["equippedItemIds"][6] = 641
+        editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"] = 999
+
+        self.assertTrue(editor.unequip_slot(hero, 6))
+        stash_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["stashSaveDatas"]}
+        self.assertIn(641, stash_uids)
+
+    def test_unequip_slot_fails_cleanly_when_no_space_anywhere(self):
+        editor = self.build(inventory_slots=1, stash_slots=1)
+        hero = editor.data["player"]["heroSaveDatas"][0]
+        self.make_amulet(editor, 651, target=None)
+        hero["equippedItemIds"][6] = 651
+        editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"] = 999
+        editor.data["player"]["stashSaveDatas"][0]["ItemUniqueId"] = 998
+
+        with patch("tbh_save_editor.messagebox.showerror") as error:
+            self.assertFalse(editor.unequip_slot(hero, 6))
+        error.assert_called_once()
+        self.assertEqual(hero["equippedItemIds"][6], 651)
+
+    def test_next_unique_id_scans_heroes_inventory_stash_and_trading(self):
+        """As quatro fontes precisam continuar sendo somadas: esquecer uma
+        (ex.: remakeTradingStashSaveDatas) geraria UID duplicado sem aviso."""
+        editor = self.build()
+        player = editor.data["player"]
+        player["heroSaveDatas"][0]["equippedItemIds"][0] = 50
+        player["inventorySaveDatas"][0]["ItemUniqueId"] = 60
+        player["stashSaveDatas"][0]["ItemUniqueId"] = 70
+        player["remakeTradingStashSaveDatas"] = [storage_slot(0, 80)]
+        self.assertEqual(editor.next_unique_id(), 81)
 
 
 if __name__ == "__main__":

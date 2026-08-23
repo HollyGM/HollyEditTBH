@@ -25,6 +25,7 @@ import tkinter as tk
 from app_meta import APP_NAME, APP_VERSION
 import commemorative_coins as coins
 from intelligence_engine import (
+    RARITY_RANK as INTELLIGENCE_RARITY_RANK,
     SLOT_NAMES as INTELLIGENCE_SLOT_NAMES,
     slot_prefixes as intelligence_slot_prefixes,
 )
@@ -141,18 +142,9 @@ DESTINATION_LABELS = {
 DESTINATION_VALUES = list(DESTINATION_LABELS.values())
 DESTINATION_FROM_LABEL = {label: value for value, label in DESTINATION_LABELS.items()}
 
-RARITY_RANK = {
-    "COMMON": 1,
-    "UNCOMMON": 2,
-    "RARE": 3,
-    "LEGENDARY": 4,
-    "IMMORTAL": 5,
-    "ARCANA": 6,
-    "BEYOND": 7,
-    "CELESTIAL": 8,
-    "DIVINE": 9,
-    "COSMIC": 10,
-}
+#: Fonte única em intelligence_engine; SLOT_NAMES já seguia esse padrão (ver
+#: comentário acima) depois de duas tabelas divergentes causarem um bug real.
+RARITY_RANK = dict(INTELLIGENCE_RARITY_RANK)
 
 RARITY_LABELS = {
     "COMMON": "Comum",
@@ -2893,7 +2885,7 @@ class ProEditor:
         ).pack(anchor="w", padx=14, pady=(14, 3))
         tk.Label(
             win,
-            text="Alocação global exata: cada item é usado uma única vez e nenhum herói é rebaixado para beneficiar outro.",
+            text="Cada item é usado uma única vez e nenhum herói é rebaixado para beneficiar outro. Heróis são avaliados em ordem: um item disputado por dois heróis vai para o que aparece primeiro na lista, não é um ótimo global calculado entre todos.",
             fg=THEME["muted"],
             bg=THEME["base"],
         ).pack(anchor="w", padx=14, pady=(0, 8))
@@ -3401,15 +3393,18 @@ class ProEditor:
                 return
             count = self.apply_campaign_access_unlocks()
             messagebox.showinfo(APP_NAME, f"Acessos liberados: {count} ajuste(s).\nUse Salvar para gravar.")
-            win.destroy()
+            campaign_tree.delete(*campaign_tree.get_children())
+            campaign_tree.insert("", END, values=("Todos os acessos locais conhecidos já estão liberados.",))
+            campaign_apply.configure(state="disabled")
 
-        ttk.Button(
+        campaign_apply = ttk.Button(
             campaign,
             text="Confirmar e preparar desbloqueios",
             style="Accent.TButton",
             command=apply_campaign,
             state="normal" if campaign_changes else "disabled",
-        ).pack(anchor="e", pady=6)
+        )
+        campaign_apply.pack(anchor="e", pady=6)
 
         unlocked_pages = [page for page in range(1, STASH_PAGE_COUNT + 1) if self.stash_page_is_unlocked(page)]
         default_queue_page = f"Armazém {unlocked_pages[-1]}" if unlocked_pages else STASH_DISPLAY_TARGETS[0]
@@ -3508,7 +3503,7 @@ class ProEditor:
             self.mark_dirty(f"Armazém {page}: {applied} pré-candidato(s) de Mercado organizados.")
             self.refresh_all()
             messagebox.showinfo(APP_NAME, f"Organização concluída: {applied} item(ns).\nA confirmação final deve ser feita dentro do jogo.")
-            win.destroy()
+            analyze_market()
 
         ttk.Button(market_actions, text="Analisar limite", command=analyze_market).pack(side=LEFT)
         ttk.Button(market_actions, text="Preencher com existentes", command=fill_market_page).pack(side=LEFT, padx=5)
@@ -3520,6 +3515,10 @@ class ProEditor:
         # o mesmo destino da fila de Mercado quando as duas são preparadas.
         recycle_default_page = f"Armazém {unlocked_pages[-2]}" if len(unlocked_pages) > 1 else default_queue_page
         recycle_page_var = StringVar(value=recycle_default_page)
+        # Moedas usa a antepenúltima página pelo mesmo motivo: evitar que a página
+        # sugerida por padrão dispute espaço com Mercado ou Reciclagem quando as
+        # três abas são preparadas na mesma sessão.
+        coin_default_page = f"Armazém {unlocked_pages[-3]}" if len(unlocked_pages) > 2 else recycle_default_page
         recycle_limit_var = StringVar(value="50")
         recycle_rarity_var = StringVar(value=RARITY_LABELS["LEGENDARY"])
         recycle_summary_var = StringVar(value="A fila nunca apaga nem converte itens automaticamente.")
@@ -3584,7 +3583,7 @@ class ProEditor:
             self.mark_dirty(f"Fila de reciclagem preparada: {applied} item(ns) no Armazém {page}.")
             self.refresh_all()
             messagebox.showinfo(APP_NAME, f"Fila preparada: {applied} item(ns).\nRecicle manualmente no Cubo do jogo.")
-            win.destroy()
+            analyze_recycle()
 
         ttk.Button(recycle_actions, text="1. Analisar sem mover", command=analyze_recycle).pack(side=LEFT)
         recycle_apply = ttk.Button(recycle_actions, text="2. Confirmar e organizar", style="Accent.TButton", command=apply_recycle, state="disabled")
@@ -3593,7 +3592,7 @@ class ProEditor:
         # ------------------------------------------------------------------
         # Moedas comemorativas (Anniversary Coins 160001-160010)
         # ------------------------------------------------------------------
-        coin_page_var = StringVar(value=default_queue_page)
+        coin_page_var = StringVar(value=coin_default_page)
         coin_summary_var = StringVar(value="Clique em Localizar; nada é movido sem confirmação.")
         coin_plan_holder: dict[str, object] = {"plan": None}
         tk.Label(coins_tab, text="JUNTAR MOEDAS COMEMORATIVAS", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
@@ -3681,7 +3680,7 @@ class ProEditor:
         coin_choice_by_label = dict(zip(coin_choice_labels, coins.COIN_DEFINITIONS))
         coin_add_choice_var = StringVar(value=coin_choice_labels[0])
         coin_add_quantity_var = StringVar(value="1")
-        coin_add_page_var = StringVar(value=default_queue_page)
+        coin_add_page_var = StringVar(value=coin_default_page)
         tk.Label(coins_tab, text="ADICIONAR MOEDA AO ARMAZÉM", fg=THEME["text"], bg=THEME["panel"], font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 4))
         tk.Label(
             coins_tab,
@@ -3913,8 +3912,8 @@ class ProEditor:
             safe_int(slot.get("ItemUniqueId")) == new_uid
             for slot in self.data["player"].get("inventorySaveDatas", [])
         )
-        if old_uid and self.free_slot_count("Inventario") + int(selected_in_inventory) < 1:
-            messagebox.showerror(APP_NAME, "Nao ha espaco no Inventario para guardar o item substituido.")
+        if old_uid and self.free_slot_count("Automatico") + int(selected_in_inventory) < 1:
+            messagebox.showerror(APP_NAME, "Não há espaço no Inventário nem no Armazém para guardar o item substituído.")
             return False
         self.remove_uid_from_locations(new_uid, include_heroes=True)
         ids = hero.setdefault("equippedItemIds", [0] * 10)
@@ -3922,7 +3921,7 @@ class ProEditor:
             ids.append(0)
         ids[slot_index] = new_uid
         if old_uid and old_uid in self.items_by_uid and not self.uid_location_labels(old_uid):
-            self.place_item(old_uid, "Inventario")
+            self.place_item(old_uid, "Automatico")
         self.selected_hero = hero
         self.selected_item = item
         self.mark_dirty(f"{self.item_name(item)} equipado em {SLOT_NAMES.get(slot_index, 'SLOT')}.")
@@ -3936,11 +3935,11 @@ class ProEditor:
         uid = safe_int(ids[slot_index])
         if not uid:
             return True
-        if self.free_slot_count("Inventario") < 1:
-            messagebox.showerror(APP_NAME, "Nao ha espaco no Inventario.")
+        if self.free_slot_count("Automatico") < 1:
+            messagebox.showerror(APP_NAME, "Não há espaço no Inventário nem no Armazém.")
             return False
         ids[slot_index] = 0
-        self.place_item(uid, "Inventario")
+        self.place_item(uid, "Automatico")
         self.mark_dirty(f"Item de {SLOT_NAMES.get(slot_index, 'SLOT')} desequipado.")
         self.refresh_all()
         return True
@@ -4111,7 +4110,7 @@ class ProEditor:
                 break
             placed += 1
             location = next(iter(self.uid_location_labels(uid)), "Automatico")
-            area = location.split(" - slot", 1)[0]
+            area = location.split(" - espaço", 1)[0]
             distribution[area] = distribution.get(area, 0) + 1
         if placed:
             self.mark_dirty(f"{placed} item(ns) sem local alocado(s) automaticamente.")
