@@ -196,6 +196,94 @@ class CommemorativeCoinPlanTests(unittest.TestCase):
         self.assertEqual(len(again.already_there), 5)
 
 
+class CommemorativeCoinCreationTests(unittest.TestCase):
+    """A aba Moedas passou a criar moedas novas, pelo mesmo caminho de ProEditor.create_item.
+
+    Antes só era possível reunir moedas já existentes no save (classe acima);
+    estes testes cobrem a criação, que reaproveita o motor de criação de itens
+    já usado pelo restante do editor em vez de duplicar validação de catálogo,
+    limite de lote e capacidade de página."""
+
+    def build(self, *, free_slots=10, page_unlocked=True):
+        player = minimal_player()
+        player["inventorySaveDatas"] = [inventory_slot(index) for index in range(4)]
+        player["stashSaveDatas"] = [stash_slot(index) for index in range(66)]
+        player["stashSaveDatas"] += [
+            stash_slot(66 + index, unlocked=page_unlocked) for index in range(66)
+        ]
+        for index in range(66 + free_slots, 132):
+            player["stashSaveDatas"][index]["ItemUniqueId"] = 90000 + index
+        return headless(player)
+
+    def test_create_item_really_adds_a_coin_to_the_chosen_stash_page(self):
+        editor = self.build()
+        with patch("legacy_editor.messagebox.showinfo"):
+            created = editor.create_item(160006, 1, "Armazem 2", enchanted=False)
+        self.assertEqual(len(created), 1)
+        coin = created[0]
+        self.assertEqual(safe_int(coin["ItemKey"]), 160006)
+
+        page_two = {
+            safe_int(slot["ItemUniqueId"])
+            for slot in editor.data["player"]["stashSaveDatas"]
+            if 66 <= safe_int(slot["Index"]) < 132
+        }
+        self.assertIn(safe_int(coin["UniqueId"]), page_two)
+        found_uids = [safe_int(row["item"]["UniqueId"]) for row in editor.commemorative_coin_rows()]
+        self.assertIn(safe_int(coin["UniqueId"]), found_uids)
+
+    def test_a_created_coin_keeps_the_material_shape_at_any_rarity(self):
+        """Moedas são MATERIAL: mesmo em raridade alta não ganham espaços de encantamento."""
+        editor = self.build()
+        with patch("legacy_editor.messagebox.showinfo"):
+            created = editor.create_item(160009, 1, "Armazem 2", enchanted=False)  # DIVINE
+        coin = created[0]
+        self.assertEqual(coin["EnchantData"], [])
+        self.assertEqual(coin["EnchantCount"], [0, 0, 0])
+
+    def test_created_coin_is_flagged_and_stays_out_of_market_candidates(self):
+        editor = self.build()
+        with patch("legacy_editor.messagebox.showinfo"):
+            created = editor.create_item(160010, 1, "Armazem 2", enchanted=False)
+        coin = created[0]
+        self.assertTrue(editor.item_is_session_changed(coin))
+        accepted, _reason = editor.market_candidate_status(coin)
+        self.assertFalse(accepted)
+
+    def test_created_coin_can_then_be_gathered_like_any_found_coin(self):
+        """Fluxo completo: adicionar uma moeda e, na sequência, juntá-la no armazém."""
+        editor = self.build()
+        with patch("legacy_editor.messagebox.showinfo"):
+            created = editor.create_item(160001, 1, "Inventario", enchanted=False)
+        coin_uid = safe_int(created[0]["UniqueId"])
+
+        plan = editor.build_commemorative_coin_plan(2)
+        self.assertIn(coin_uid, [safe_int(row["item"]["UniqueId"]) for row in plan.rows_to_apply])
+
+        applied = editor.apply_storage_queue(list(plan.rows_to_apply), 2)
+        self.assertEqual(applied, plan.moving)
+        page_two = {
+            safe_int(slot["ItemUniqueId"])
+            for slot in editor.data["player"]["stashSaveDatas"]
+            if 66 <= safe_int(slot["Index"]) < 132
+        }
+        self.assertIn(coin_uid, page_two)
+
+    def test_batch_limit_still_applies_when_creating_coins(self):
+        editor = self.build()
+        with patch("legacy_editor.messagebox.showerror") as error:
+            created = editor.create_item(160001, legacy_editor.PROTECTED_BATCH_LIMIT + 1, "Armazem 2", enchanted=False)
+        self.assertEqual(created, [])
+        error.assert_called_once()
+
+    def test_create_item_refuses_a_locked_stash_page(self):
+        editor = self.build(page_unlocked=False)
+        with patch("legacy_editor.messagebox.showerror") as error:
+            created = editor.create_item(160001, 1, "Armazem 2", enchanted=False)
+        self.assertEqual(created, [])
+        error.assert_called_once()
+
+
 class StashPageStateTests(unittest.TestCase):
     def test_locked_page_is_detected_even_when_it_has_no_items(self):
         player = minimal_player()

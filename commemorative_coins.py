@@ -6,9 +6,14 @@ Cubo e devolvem um equipamento aleatório; caem de baús e não são fabricadas.
 Por serem MATERIAL, negociam no Mercado em qualquer raridade — ao contrário do
 equipamento, que só negocia de Lendário para cima.
 
-Este módulo é a parte de dados e de planejamento. Ele não toca em tkinter e não
-grava nada: monta um plano de movimentação que a interface confirma e o editor
-aplica pelo mesmo caminho transacional das demais filas.
+Este módulo é a parte de dados e de planejamento de quem já existe no save. Ele
+não toca em tkinter e não grava nada: monta um plano de movimentação que a
+interface confirma e o editor aplica pelo mesmo caminho transacional das
+demais filas.
+
+Criar moedas novas não é responsabilidade deste módulo: a aba Moedas usa o
+fluxo genérico de criação de itens do editor (``ProEditor.create_item``), o
+mesmo caminho usado para qualquer outro item do catálogo.
 """
 from __future__ import annotations
 
