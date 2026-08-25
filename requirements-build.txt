@@ -1,9 +1,15 @@
-# Toolchain resolvida e validada no Windows CI da série 3.3.x.
+# Toolchain resolvida e validada nos runners de CI das séries 3.3.x/3.4.x.
 # Manter versões explícitas evita deriva silenciosa entre builds.
 pyinstaller==6.22.0
 pyinstaller-hooks-contrib==2026.6
 altgraph==0.17.5
-pefile==2024.8.26
-pywin32-ctypes==0.2.3
 packaging==26.2
 setuptools==84.0.0
+
+# Dependências que só existem para o empacotamento Windows. Sem os marcadores,
+# instalar este arquivo no Linux ou no macOS puxava pacotes inúteis lá.
+pefile==2024.8.26; sys_platform == "win32"
+pywin32-ctypes==0.2.3; sys_platform == "win32"
+
+# macOS: o PyInstaller precisa deste pacote para gerar o bundle .app.
+macholib==1.16.3; sys_platform == "darwin"

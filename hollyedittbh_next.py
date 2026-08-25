@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 import time
+import urllib.error
 from tkinter import Tk
 
 import tbh_save_editor as legacy
@@ -45,6 +46,19 @@ def _load_profiles() -> dict:
         return raw if isinstance(raw, dict) else {}
     except (OSError, ValueError, json.JSONDecodeError):
         return {}
+
+
+def _offline_notice(source: str, error: BaseException) -> str:
+    """Explica a falha de rede em português em vez de repetir o texto da exceção.
+
+    Estas atualizações são de segundo plano e opcionais: o editor funciona com o
+    catálogo em cache. Despejar ``<urlopen error Tunnel connection failed: 403
+    Forbidden>`` na barra de status parecia defeito do programa, não ausência de
+    internet."""
+    if isinstance(error, (OSError, urllib.error.URLError, TimeoutError)):
+        return f"{source}: sem conexão agora; o editor segue usando os dados já baixados."
+    detail = str(error).strip() or error.__class__.__name__
+    return f"{source}: atualização não aplicada ({detail}); os dados já baixados continuam valendo."
 
 
 def _version_tuple(value: object) -> tuple[int, ...]:
@@ -137,6 +151,15 @@ class EnhancedProEditor(legacy.ProEditor):
         filled = sum(isinstance(row, dict) and self.enchant_is_filled(row) for row in enchants)
         score = self.auto_equip_breakdown(item, hero)
         return f"{filled}/{len(enchants)} ativos · nota {score.total:.1f} · AF {score.affinity:.1f} · T{score.total_tier}"
+
+    def auto_equip_all_strategy_note(self) -> str:
+        """Esta camada resolve a alocação exata, não a gulosa do núcleo legado."""
+        return (
+            "Cada item é usado uma única vez e nenhum herói é rebaixado para beneficiar outro. "
+            "A distribuição é calculada como um ótimo global entre todos os heróis ao mesmo tempo: "
+            "quando dois disputam o mesmo item, vence a combinação que dá a maior soma de notas — "
+            "a ordem dos heróis no save não decide."
+        )
 
     def build_auto_equip_all_plan(self) -> list[dict]:
         if not self.data:
@@ -342,13 +365,13 @@ class EnhancedProEditor(legacy.ProEditor):
             rows = safe_download_catalog(Progress(self.intel_jobs), previous_rows=previous_rows, cache_file=legacy.CACHE_FILE, base_url=legacy.BASE_URL, fetch_url=legacy.fetch_url, parse_embedded_items=legacy.parse_embedded_items)
             self.intel_jobs.put(("catalog", rows))
         except Exception as exc:
-            self.intel_jobs.put(("status", f"Catálogo: {exc}"))
+            self.intel_jobs.put(("status", _offline_notice("Catálogo de itens", exc)))
 
     def _market_refresh_background(self) -> None:
         try:
             self.intel_jobs.put(("market", fetch_market_snapshot(MARKET_CACHE_FILE)))
         except Exception as exc:
-            self.intel_jobs.put(("status", f"Mercado Steam: {exc}"))
+            self.intel_jobs.put(("status", _offline_notice("Mercado Steam", exc)))
 
     def refresh_intelligence_sources(self) -> None:
         now = time.time()
