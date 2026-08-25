@@ -6,22 +6,39 @@ e no macOS, ``os.startfile`` só existe no Windows (chamá-lo em outro sistema
 levanta ``AttributeError``) e ``LOCALAPPDATA`` decidia onde gravar cache e
 ícones. Este módulo concentra essas três decisões e não importa ``tkinter``,
 para poder ser testado sem interface gráfica.
+
+A descoberta do save no Linux passa pelas bibliotecas Steam declaradas em
+``libraryfolders.vdf``, e não só pelas pastas dentro do ``$HOME``: uma biblioteca
+em disco externo é comum e antes ficava invisível para o editor.
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from app_meta import STEAM_APP_ID, STEAM_PLAYTEST_APP_ID
 
 #: Subcaminho do jogo dentro da pasta de dados da Unity, igual em toda plataforma.
 GAME_VENDOR = "TesseractStudio"
 GAME_FOLDER = "TaskbarHero"
 SAVE_FILE_NAME = "SaveFile_Live.es3"
 
-#: AppID do Taskbar Hero na Steam, usado para achar o prefixo Proton no Linux.
-STEAM_APP_ID = "2957000"
+#: AppIDs procurados em ``compatdata``, na ordem de preferência: o jogo publicado
+#: vence o playtest mesmo quando os dois prefixos existem.
+STEAM_APP_IDS = (STEAM_APP_ID, STEAM_PLAYTEST_APP_ID)
+
+#: ``libraryfolders.vdf`` real tem alguns KB; o teto evita carregar um arquivo
+#: gigante para a memória se o caminho apontar para outra coisa.
+VDF_READ_LIMIT = 1024 * 1024
+
+#: O VDF é um formato de pares aspeados. Uma regex sobre as linhas ``"path"``
+#: resolve sem trazer uma dependência nova para um projeto que hoje só usa
+#: ``cryptography`` — e ainda assim de forma opcional.
+_VDF_PATH_RE = re.compile(r'"path"\s*"([^"]*)"', re.IGNORECASE)
 
 #: Ordem de preferência de fonte por sistema. A primeira família realmente
 #: instalada vence; sem nenhuma delas o Tk decide sozinho.
@@ -52,14 +69,80 @@ def _unity_data_root(home: Path, platform: str) -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
 
 
+def _default_steam_roots(home: Path) -> list[Path]:
+    """Instalações Steam do próprio usuário: pacote do sistema, nativa e Flatpak."""
+    return [
+        home / ".steam" / "steam",
+        home / ".local" / "share" / "Steam",
+        home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+    ]
+
+
+def _library_paths_from_vdf(vdf_file: Path) -> list[Path]:
+    """Bibliotecas declaradas em ``libraryfolders.vdf``.
+
+    Nunca levanta exceção. ``legacy_editor`` resolve ``GAME_SAVE_DIR`` em tempo de
+    import, então um disco desmontado, um arquivo sem permissão de leitura ou um
+    VDF corrompido derrubariam a aplicação na inicialização em vez de apenas não
+    encontrarem o save.
+    """
+    try:
+        with vdf_file.open("rb") as handle:
+            blob = handle.read(VDF_READ_LIMIT)
+    except (OSError, ValueError):
+        return []
+    content = blob.decode("utf-8", errors="replace")
+    found: list[Path] = []
+    for raw in _VDF_PATH_RE.findall(content):
+        # O Steam grava o separador escapado no formato Windows ("D:\\Jogos").
+        cleaned = raw.replace("\\\\", "\\").strip()
+        if not cleaned:
+            continue
+        try:
+            found.append(Path(cleaned))
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def steam_library_roots(home: Path) -> list[Path]:
+    """Raízes de biblioteca Steam: as padrão do usuário mais as do ``libraryfolders.vdf``.
+
+    Sem ler o VDF, uma biblioteca em disco externo — a configuração de quem tem
+    SSD de sistema pequeno e joga a partir de outro disco — fica invisível para o
+    editor, mesmo com o AppID correto.
+    """
+    libraries: list[Path] = []
+    seen: set[str] = set()
+
+    def remember(path: Path) -> None:
+        marker = str(path)
+        if marker not in seen:
+            seen.add(marker)
+            libraries.append(path)
+
+    for root in _default_steam_roots(home):
+        remember(root)
+    # Só as raízes padrão são varridas: ``~/.steam/steam`` costuma ser symlink
+    # para ``~/.local/share/Steam``, então o mesmo VDF apareceria duas vezes, e
+    # revarrer as bibliotecas declaradas abriria caminho para recursão entre
+    # instalações que se apontam mutuamente.
+    for root in list(libraries):
+        for declared in _library_paths_from_vdf(root / "steamapps" / "libraryfolders.vdf"):
+            remember(declared)
+    return libraries
+
+
 def _proton_prefix_roots(home: Path) -> list[Path]:
     """Prefixos Proton/Wine onde uma instalação Windows do jogo pode estar."""
-    libraries = [
-        home / ".steam" / "steam" / "steamapps",
-        home / ".local" / "share" / "Steam" / "steamapps",
-        home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam" / "steamapps",
+    libraries = steam_library_roots(home)
+    # AppID no laço externo: o prefixo do jogo publicado vence o do playtest
+    # mesmo quando os dois existem, em bibliotecas diferentes.
+    roots = [
+        library / "steamapps" / "compatdata" / str(app_id) / "pfx" / "drive_c"
+        for app_id in STEAM_APP_IDS
+        for library in libraries
     ]
-    roots = [library / "compatdata" / STEAM_APP_ID / "pfx" / "drive_c" for library in libraries]
     roots.append(home / ".wine" / "drive_c")
     users = []
     for root in roots:

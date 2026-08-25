@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import ast
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import app_meta
 import legacy_editor
+import market_policy
 import platform_support
 from tbh_save_editor import ProEditor
 
@@ -305,6 +308,212 @@ class PlatformSupportTests(unittest.TestCase):
         self.assertEqual(platform_support.preferred_font_family(["Segoe UI", "Arial"], "win32"), "Segoe UI")
         self.assertIsNone(platform_support.preferred_font_family([], "linux"))
         self.assertIsNone(platform_support.preferred_font_family(["Comic Sans MS"], "linux"))
+
+
+class SteamLibraryDiscoveryTests(unittest.TestCase):
+    """O editor não achava o save no Linux por dois defeitos independentes.
+
+    O AppID em ``platform_support`` era o do playtest (2957000) enquanto o valor
+    correto (3678970) já existia em ``market_policy``, e a busca só olhava
+    bibliotecas Steam dentro do ``$HOME`` — uma biblioteca em disco externo,
+    declarada em ``libraryfolders.vdf``, ficava invisível.
+    """
+
+    SAVE_SUFFIX = Path("pfx/drive_c/users/steamuser/AppData/LocalLow/TesseractStudio/TaskbarHero")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.home = self.tmp / "home" / "thiago"
+        self.home.mkdir(parents=True)
+
+    def write_vdf(self, steam_root: Path, body: bytes) -> Path:
+        target = steam_root / "steamapps" / "libraryfolders.vdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+        return target
+
+    @staticmethod
+    def vdf_for(paths) -> bytes:
+        rows = "\n".join(f'\t\t\t"path"\t\t"{path}"' for path in paths)
+        return f'"libraryfolders"\n{{\n\t"0"\n\t{{\n{rows}\n\t}}\n}}\n'.encode("utf-8")
+
+    def candidates(self):
+        return [str(path) for path in platform_support.game_save_dir_candidates(self.home, "linux")]
+
+    def test_a_library_on_an_external_disk_is_found(self):
+        """Cenário relatado: SSD de sistema pequeno e jogo em disco externo."""
+        external = self.tmp / "run" / "media" / "thiago" / "Thiago" / "SteamLibrary"
+        self.write_vdf(
+            self.home / ".steam" / "steam",
+            self.vdf_for([self.home / ".local" / "share" / "Steam", external]),
+        )
+        expected = external / "steamapps" / "compatdata" / "3678970" / self.SAVE_SUFFIX
+        self.assertIn(str(expected), self.candidates())
+
+    def test_the_external_library_is_what_default_dir_returns(self):
+        """Ponta a ponta: com o save no disco externo, é ele que o editor abre."""
+        external = self.tmp / "run" / "media" / "thiago" / "Thiago" / "SteamLibrary"
+        save_dir = external / "steamapps" / "compatdata" / "3678970" / self.SAVE_SUFFIX
+        save_dir.mkdir(parents=True)
+        (save_dir / platform_support.SAVE_FILE_NAME).write_bytes(b"save")
+        self.write_vdf(self.home / ".steam" / "steam", self.vdf_for([external]))
+        self.assertEqual(platform_support.default_game_save_dir(self.home, "linux"), save_dir)
+
+    def test_the_published_app_id_wins_over_the_playtest(self):
+        """Os dois prefixos podem coexistir; o jogo publicado tem de vir antes."""
+        external = self.tmp / "biblioteca"
+        self.write_vdf(self.home / ".steam" / "steam", self.vdf_for([external]))
+        rendered = self.candidates()
+        published = [index for index, path in enumerate(rendered) if "/3678970/" in path]
+        playtest = [index for index, path in enumerate(rendered) if "/2957000/" in path]
+        self.assertTrue(published, "nenhum candidato usa o AppID do jogo publicado")
+        self.assertTrue(playtest, "o AppID do playtest deixou de ser procurado")
+        self.assertLess(
+            max(published), min(playtest),
+            "um prefixo do playtest seria aberto antes do prefixo do jogo publicado",
+        )
+
+    def test_a_playtest_only_install_is_still_found(self):
+        external = self.tmp / "biblioteca"
+        save_dir = external / "steamapps" / "compatdata" / "2957000" / self.SAVE_SUFFIX
+        save_dir.mkdir(parents=True)
+        self.write_vdf(self.home / ".steam" / "steam", self.vdf_for([external]))
+        self.assertEqual(platform_support.default_game_save_dir(self.home, "linux"), save_dir)
+
+    def test_a_missing_vdf_keeps_the_previous_behaviour(self):
+        """Sem Steam instalada, nada muda e nada explode."""
+        rendered = self.candidates()
+        self.assertTrue(rendered)
+        outside_home = [path for path in rendered if not path.startswith(str(self.home))]
+        self.assertEqual(outside_home, [], f"caminho fora do home sem VDF: {outside_home[:3]}")
+
+    def test_an_unreadable_or_corrupt_vdf_never_raises(self):
+        """``legacy_editor`` resolve GAME_SAVE_DIR em tempo de import: uma exceção
+        aqui derruba a aplicação na inicialização em vez de só não achar o save."""
+        steam_root = self.home / ".steam" / "steam"
+        for body in (b"", b"\x00\x01\x02 lixo binario \xff\xfe", b'"libraryfolders" { "0" {', b'"path" ""'):
+            with self.subTest(body=body[:16]):
+                self.write_vdf(steam_root, body)
+                self.assertTrue(self.candidates())
+
+        # Um diretório no lugar do arquivo cobre o caso de leitura impossível.
+        vdf = steam_root / "steamapps" / "libraryfolders.vdf"
+        vdf.unlink()
+        vdf.mkdir()
+        self.assertTrue(self.candidates())
+
+    def test_the_same_library_declared_twice_appears_once(self):
+        """``~/.steam/steam`` costuma ser symlink para ``~/.local/share/Steam``."""
+        external = self.tmp / "biblioteca"
+        body = self.vdf_for([external])
+        self.write_vdf(self.home / ".steam" / "steam", body)
+        self.write_vdf(self.home / ".local" / "share" / "Steam", body)
+        roots = [str(path) for path in platform_support.steam_library_roots(self.home)]
+        self.assertEqual(roots.count(str(external)), 1, roots)
+        rendered = self.candidates()
+        self.assertEqual(len(rendered), len(set(rendered)), "há candidatos repetidos")
+
+    def test_a_windows_style_escaped_path_is_normalised(self):
+        self.write_vdf(self.home / ".steam" / "steam", b'"path"\t\t"D:\\\\SteamLibrary"')
+        roots = [str(path) for path in platform_support.steam_library_roots(self.home)]
+        self.assertIn("D:\\SteamLibrary", roots)
+        self.assertNotIn("D:\\\\SteamLibrary", roots)
+
+    def test_a_huge_file_in_place_of_the_vdf_is_not_read_whole(self):
+        steam_root = self.home / ".steam" / "steam"
+        filler = b'"ignorado" "x"\n' * 200_000
+        self.write_vdf(steam_root, filler + self.vdf_for([self.tmp / "tarde-demais"]))
+        self.assertGreater(len(filler), platform_support.VDF_READ_LIMIT)
+        roots = [str(path) for path in platform_support.steam_library_roots(self.home)]
+        self.assertNotIn(str(self.tmp / "tarde-demais"), roots)
+        self.assertTrue(self.candidates())
+
+
+class StartupAutoLoadTests(unittest.TestCase):
+    """Achar o caminho do save não bastava para o editor abri-lo sozinho.
+
+    ``DEFAULT_SAVE_FILE`` só escolhia a pasta inicial do seletor: ``main`` carregava
+    apenas um argumento de linha de comando ou ``player_dump.json``, então o
+    usuário confirmava o mesmo arquivo no diálogo a cada abertura.
+    """
+
+    def setUp(self):
+        import hollyedittbh_final
+
+        self.module = hollyedittbh_final
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.loaded: list[Path] = []
+
+    def run_main(self, argv, *, save_file: Path, app_dir: Path):
+        editor = type("FakeEditor", (), {"load_dump": lambda _self, path: self.loaded.append(Path(path))})
+        with patch.object(self.module, "Tk", lambda: type("FakeRoot", (), {"mainloop": lambda _s: None})()), \
+             patch.object(self.module, "FinalProEditor", lambda _root: editor()), \
+             patch.object(self.module.legacy, "DEFAULT_SAVE_FILE", save_file), \
+             patch.object(self.module.legacy, "APP_DIR", app_dir), \
+             patch.object(self.module.sys, "argv", argv):
+            self.module.main()
+
+    def test_the_game_save_is_loaded_on_startup_when_it_exists(self):
+        save_file = self.tmp / "SaveFile_Live.es3"
+        save_file.write_bytes(b"save")
+        self.run_main(["hollyedittbh_final.py"], save_file=save_file, app_dir=self.tmp / "app")
+        self.assertEqual(self.loaded, [save_file])
+
+    def test_an_explicit_argument_still_wins_over_the_game_save(self):
+        save_file = self.tmp / "SaveFile_Live.es3"
+        save_file.write_bytes(b"save")
+        requested = self.tmp / "outro.json"
+        requested.write_text("{}", encoding="utf-8")
+        self.run_main(["hollyedittbh_final.py", str(requested)], save_file=save_file, app_dir=self.tmp / "app")
+        self.assertEqual(self.loaded, [requested])
+
+    def test_a_local_dump_still_wins_over_the_game_save(self):
+        save_file = self.tmp / "SaveFile_Live.es3"
+        save_file.write_bytes(b"save")
+        app_dir = self.tmp / "app"
+        app_dir.mkdir()
+        dump = app_dir / "player_dump.json"
+        dump.write_text("{}", encoding="utf-8")
+        self.run_main(["hollyedittbh_final.py"], save_file=save_file, app_dir=app_dir)
+        self.assertEqual(self.loaded, [dump])
+
+    def test_nothing_is_loaded_when_no_save_was_found(self):
+        self.run_main(
+            ["hollyedittbh_final.py"],
+            save_file=self.tmp / "ausente" / "SaveFile_Live.es3",
+            app_dir=self.tmp / "app",
+        )
+        self.assertEqual(self.loaded, [])
+
+
+class SteamAppIdTests(unittest.TestCase):
+    def test_the_app_id_has_a_single_definition(self):
+        """Eram duas constantes homônimas com valores diferentes: ``market_policy``
+        trazia 3678970 e ``platform_support`` trazia o AppID do playtest, então a
+        procura do save no Linux apontava para uma pasta que não existe."""
+        self.assertEqual(app_meta.STEAM_APP_ID, 3678970)
+        self.assertIs(market_policy.STEAM_APP_ID, app_meta.STEAM_APP_ID)
+        self.assertEqual(platform_support.STEAM_APP_IDS[0], app_meta.STEAM_APP_ID)
+        for module in ("market_policy.py", "platform_support.py"):
+            source = (BASE / module).read_text(encoding="utf-8")
+            self.assertNotIn("STEAM_APP_ID = 3678970", source, f"{module} redefine o AppID")
+            self.assertNotIn("2957000", source, f"{module} embute o AppID do playtest")
+
+    def test_the_market_url_still_receives_the_app_id(self):
+        """``market_intelligence`` interpola o AppID numa URL e o reexporta."""
+        import market_intelligence
+
+        self.assertIs(market_intelligence.STEAM_APP_ID, app_meta.STEAM_APP_ID)
+        self.assertIn("STEAM_APP_ID", market_intelligence.__all__)
+        self.assertEqual(
+            f"{market_intelligence.STEAM_MARKET_SEARCH}?appid={market_intelligence.STEAM_APP_ID}",
+            "https://steamcommunity.com/market/search/?appid=3678970",
+        )
+
+    def test_the_playtest_id_is_only_a_fallback_for_path_discovery(self):
+        self.assertEqual(platform_support.STEAM_APP_IDS, (3678970, 2957000))
 
 
 class EditorPortabilityTests(unittest.TestCase):
