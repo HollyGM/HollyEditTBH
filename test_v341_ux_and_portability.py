@@ -365,8 +365,12 @@ class SteamLibraryDiscoveryTests(unittest.TestCase):
         external = self.tmp / "biblioteca"
         self.write_vdf(self.home / ".steam" / "steam", self.vdf_for([external]))
         rendered = self.candidates()
-        published = [index for index, path in enumerate(rendered) if "/3678970/" in path]
-        playtest = [index for index, path in enumerate(rendered) if "/2957000/" in path]
+        # Marcador derivado de Path: no Windows o separador é "\", e procurar
+        # "/3678970/" não encontrava candidato nenhum.
+        published_marker = str(Path("compatdata") / "3678970")
+        playtest_marker = str(Path("compatdata") / "2957000")
+        published = [index for index, path in enumerate(rendered) if published_marker in path]
+        playtest = [index for index, path in enumerate(rendered) if playtest_marker in path]
         self.assertTrue(published, "nenhum candidato usa o AppID do jogo publicado")
         self.assertTrue(playtest, "o AppID do playtest deixou de ser procurado")
         self.assertLess(
@@ -382,11 +386,24 @@ class SteamLibraryDiscoveryTests(unittest.TestCase):
         self.assertEqual(platform_support.default_game_save_dir(self.home, "linux"), save_dir)
 
     def test_a_missing_vdf_keeps_the_previous_behaviour(self):
-        """Sem Steam instalada, nada muda e nada explode."""
-        rendered = self.candidates()
-        self.assertTrue(rendered)
-        outside_home = [path for path in rendered if not path.startswith(str(self.home))]
-        self.assertEqual(outside_home, [], f"caminho fora do home sem VDF: {outside_home[:3]}")
+        """Sem Steam instalada, nenhuma biblioteca nova entra — e nada explode.
+
+        A asserção olha só as bibliotecas Steam. O caminho nativo da Unity é
+        outro ramo, anterior a esta mudança, e sai do ``$HOME`` de propósito
+        quando ``XDG_CONFIG_HOME`` aponta para fora dele.
+        """
+        roots = [str(path) for path in platform_support.steam_library_roots(self.home)]
+        self.assertTrue(roots)
+        self.assertTrue(
+            all(root.startswith(str(self.home)) for root in roots),
+            f"biblioteca fora do home sem nenhum VDF: {roots}",
+        )
+        marker = str(Path("steamapps") / "compatdata")
+        stray = [
+            path for path in self.candidates()
+            if marker in path and not path.startswith(str(self.home))
+        ]
+        self.assertEqual(stray, [], f"prefixo Proton fora do home sem VDF: {stray[:3]}")
 
     def test_an_unreadable_or_corrupt_vdf_never_raises(self):
         """``legacy_editor`` resolve GAME_SAVE_DIR em tempo de import: uma exceção
