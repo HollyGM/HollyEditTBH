@@ -33,7 +33,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
-        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py
       - name: Smoke test compatibility source entry
         shell: pwsh
         run: |
@@ -93,6 +93,99 @@ jobs:
           name: HollyEditTBH-v3.4.0-windows
           path: |
             dist/HollyEditTBH.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  linux-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.10'
+      - name: Install Tk and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-tk xvfb
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run regression suite
+        run: xvfb-run -a python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py
+      - name: Install pinned PyInstaller
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+      - name: Build Linux binary
+        run: pyinstaller --clean --noconfirm HollyEditTBH.spec
+      - name: Smoke test Linux binary
+        run: |
+          test -x dist/HollyEditTBH || { echo 'binário Linux não foi gerado'; exit 1; }
+          xvfb-run -a ./dist/HollyEditTBH &
+          pid=$!
+          sleep 8
+          kill -0 "$pid" || { echo 'HollyEditTBH encerrou durante o smoke test'; exit 1; }
+          kill "$pid" 2>/dev/null || true
+          echo 'Startup do binário Linux validado por 8 segundos.'
+      - name: Generate SHA-256 checksum
+        run: |
+          cd dist
+          sha256sum HollyEditTBH > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload Linux package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: HollyEditTBH-v3.4.0-linux
+          path: |
+            dist/HollyEditTBH
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  macos-tests:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.10'
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run regression suite
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py
+      - name: Install pinned PyInstaller
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+      - name: Build macOS bundle
+        run: pyinstaller --clean --noconfirm HollyEditTBH.spec
+      - name: Verify macOS bundle layout
+        run: |
+          test -d dist/HollyEditTBH.app || { echo 'HollyEditTBH.app não foi gerado'; exit 1; }
+          test -x dist/HollyEditTBH.app/Contents/MacOS/HollyEditTBH || { echo 'executável do bundle ausente'; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/HollyEditTBH.app/Contents/Info.plist
+      - name: Smoke test macOS bundle
+        run: |
+          ./dist/HollyEditTBH.app/Contents/MacOS/HollyEditTBH &
+          pid=$!
+          sleep 8
+          kill -0 "$pid" || { echo 'HollyEditTBH encerrou durante o smoke test'; exit 1; }
+          kill "$pid" 2>/dev/null || true
+          echo 'Startup do bundle macOS validado por 8 segundos.'
+      - name: Package macOS bundle
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent HollyEditTBH.app HollyEditTBH-macos.zip
+          shasum -a 256 HollyEditTBH-macos.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload macOS package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: HollyEditTBH-v3.4.0-macos
+          path: |
+            dist/HollyEditTBH-macos.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
