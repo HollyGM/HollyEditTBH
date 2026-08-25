@@ -27,7 +27,11 @@ python3.12 hollyedittbh_final.py
 
 Quem prefere executável pronto encontra um pacote por plataforma nos artefatos do GitHub Actions, que exigem conta no GitHub e expiram 30 dias após o build — veja [Gerar o executável](#gerar-o-executável) e [Verificação do pacote](#verificação-do-pacote).
 
-O editor localiza sozinho a pasta do save de cada sistema. No Windows ela fica em `AppData/LocalLow/TesseractStudio/TaskbarHero`; no Linux e no macOS o Taskbar Hero roda sob Proton, Wine ou Crossover, e a mesma árvore vive dentro do prefixo. Se o save estiver em outro lugar, use **Abrir save** e aponte o `.es3` manualmente.
+O editor localiza sozinho a pasta do save de cada sistema e, se encontrar o `SaveFile_Live.es3`, já o abre ao iniciar. No Windows ela fica em `AppData/LocalLow/TesseractStudio/TaskbarHero`; no Linux e no macOS o Taskbar Hero roda sob Proton, Wine ou Crossover, e a mesma árvore vive dentro do prefixo.
+
+No Linux, a procura não se limita às pastas dentro do `$HOME`: as bibliotecas Steam declaradas em `libraryfolders.vdf` também entram, de modo que uma biblioteca em disco externo — configuração comum de quem tem SSD de sistema pequeno — é encontrada. Se o save estiver em outro lugar, use **Abrir save** e aponte o `.es3` manualmente.
+
+Passar um caminho na linha de comando ou deixar um `player_dump.json` ao lado do programa continua tendo precedência sobre a abertura automática.
 
 Feche o jogo antes de salvar. No Windows, o Modo Protegido detecta o Taskbar Hero em execução e recusa gravar; no Linux e no macOS essa detecção não existe, então fechar o jogo antes de salvar é responsabilidade sua.
 
@@ -176,6 +180,8 @@ A entrada suportada é `hollyedittbh_final.py`.
 
 Módulos de apoio sem dependência de `tkinter`, para poderem ser testados sem interface: `intelligence_engine.py` (pontuação e alocação), `market_policy.py` (política única de Mercado), `commemorative_coins.py` (registro e plano das moedas), `safe_persistence.py` (gravação transacional), `platform_support.py` (caminhos, abertura de pastas e fonte por sistema).
 
+`app_meta.py` concentra os metadados de identidade — nome, versão e o AppID Steam do jogo. O AppID chegou a existir duas vezes com valores diferentes, o que quebrou a descoberta do save no Linux; ele agora tem uma definição só, e um teste falha se um módulo voltar a redefini-lo.
+
 ## Testes
 
 Executar a mesma suíte usada pelo CI:
@@ -186,7 +192,7 @@ python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_mar
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **165 testes automatizados**:
+A suíte contém **181 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -197,7 +203,7 @@ A suíte contém **165 testes automatizados**:
 | `test_final_audit_v331.py` | 14 | auditoria da 3.3.1 |
 | `test_hardening_v332.py` | 18 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
-| `test_v341_ux_and_portability.py` | 33 | interface, português e portabilidade |
+| `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 
@@ -206,7 +212,8 @@ Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram n
 - **cada camada declara o algoritmo que roda**, para a prévia não descrever a estratégia da outra;
 - **ordem de empilhamento das tabelas** — a tabela é irmã do próprio container de rolagem e, sem `lift`, fica invisível apesar de continuar populada;
 - **reserva da faixa de ações** antes da área expansível, e rolagem de uma aba mais alta que a janela;
-- **caminhos de save das três plataformas**, abertura de pasta sem `os.startfile` e resolução de fonte.
+- **caminhos de save das três plataformas**, abertura de pasta sem `os.startfile` e resolução de fonte;
+- **descoberta do save no Linux** — AppID com definição única, bibliotecas Steam em disco externo, VDF ausente ou corrompido, e precedência do jogo publicado sobre o playtest.
 
 Dois testes do baseline só passavam em um host Windows com o jogo instalado; hoje exercitam o comportamento pretendido em qualquer plataforma.
 
@@ -287,6 +294,15 @@ Três pontos assumiam Windows e quebravam calado fora dele:
 Além disso, a fonte `Segoe UI` era pedida por nome fixo em 36 lugares. Ela não existe no Linux nem no macOS, e pedir uma família ausente faz o Tk cair numa fonte bitmap antiga. A família passou a ser resolvida em tempo de execução entre as instaladas.
 
 O `HollyEditTBH.spec` passou a empacotar nas três plataformas (VERSIONINFO só no Windows, `BUNDLE` .app no macOS, UPX desligado no macOS para não invalidar a assinatura), as dependências exclusivas do Windows ganharam marcador de plataforma, e o CI compila, testa e faz smoke test do executável em `windows-latest`, `ubuntu-latest` e `macos-latest`.
+
+### 3.4.0 — descoberta do save no Linux
+
+O editor não encontrava o save numa instalação Linux comum. Eram dois defeitos independentes, cada um suficiente sozinho para impedir a detecção:
+
+- **AppID errado e duplicado.** `platform_support` procurava `compatdata/2957000`, que é o AppID do playtest, enquanto o valor do jogo publicado (3678970) já existia em `market_policy`. Duas constantes homônimas com valores conflitantes, contra o padrão de fonte única do projeto. O AppID passou a viver em `app_meta.py`; os dois módulos importam de lá, e a procura considera os dois prefixos, com o jogo publicado à frente do playtest.
+- **Só bibliotecas Steam dentro do `$HOME`.** O Steam registra bibliotecas secundárias em `libraryfolders.vdf`, que o editor não lia. Quem tem SSD de sistema pequeno e joga a partir de outro disco continuava sem detecção mesmo com o AppID corrigido. A leitura é feita por expressão regular sobre as linhas `"path"`, sem dependência nova, e nunca levanta exceção — `legacy_editor` resolve `GAME_SAVE_DIR` em tempo de import, então um disco desmontado ou um VDF corrompido derrubaria a aplicação na inicialização.
+
+Achar o caminho, porém, ainda não abria o save: `main` carregava apenas um argumento de linha de comando ou um `player_dump.json`, e `DEFAULT_SAVE_FILE` só escolhia a pasta inicial do seletor. O `SaveFile_Live.es3` encontrado passou a ser aberto na inicialização, atrás dessas duas precedências.
 
 ### 3.4.0 — correções de domínio
 

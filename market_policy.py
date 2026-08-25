@@ -27,13 +27,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from app_meta import STEAM_APP_ID as STEAM_APP_ID_FROM_META
+
 # Data da última conferência das regras públicas descritas acima.
 POLICY_CHECKED_AT = "2026-08-21"
 
 # Aviso oficial do jogo; continua sendo a fonte final de verdade.
 OFFICIAL_NEWS_URL = "https://steamcommunity.com/app/3678970/allnews/"
 
-STEAM_APP_ID = 3678970
+#: Reexportado de app_meta, que é a fonte única. O nome continua disponível aqui
+#: porque market_intelligence o importa deste módulo e o publica no ``__all__``.
+STEAM_APP_ID = STEAM_APP_ID_FROM_META
 
 #: Nível do Cubo que libera o Navio de Trocas (e, por consequência, o Mercado).
 CUBE_MARKET_UNLOCK_LEVEL = 10

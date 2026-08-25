@@ -212,6 +212,12 @@ def main() -> None:
         app.load_dump(requested)
     elif default_dump.exists():
         app.load_dump(default_dump)
+    elif legacy.DEFAULT_SAVE_FILE.is_file():
+        # Descobrir o caminho do save não bastava: até aqui a descoberta só
+        # escolhia a pasta inicial do seletor, e o usuário precisava confirmar o
+        # mesmo arquivo a cada abertura. Carregar é leitura — nada é gravado até
+        # Salvar alterações, e o Modo Protegido continua governando a gravação.
+        app.load_dump(legacy.DEFAULT_SAVE_FILE)
     root.mainloop()
 
 
