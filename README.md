@@ -192,7 +192,7 @@ python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_mar
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **200 testes automatizados**:
+A suíte contém **198 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -204,7 +204,7 @@ A suíte contém **200 testes automatizados**:
 | `test_hardening_v332.py` | 18 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
 | `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
-| `test_v342_stash_geometry.py` | 19 | tamanho da página do armazém, número de abas medido no save e itens em aba bloqueada |
+| `test_v342_stash_geometry.py` | 17 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 
@@ -267,7 +267,7 @@ Auditoria da interface. Nenhum destes defeitos altera o formato do save, e nenhu
 - **a otimização global de heróis era código morto.** `open_auto_equip_all_preview` — o único caminho que usa a alocação exata de `intelligence_engine.optimal_unique_assignment` — não tinha nenhum chamador em lugar nenhum do programa. O recurso estava implementado e testado, mas era inacessível pela interface. Ganhou entrada no painel de heróis (**Otimizar todos os heróis**) e na aba **Equipamentos** da Central de Inteligência;
 - **a prévia dessa otimização descrevia o algoritmo errado.** O texto dizia "a ordem dos heróis decide quem fica com um item disputado — não é um ótimo global", que descreve a versão gulosa do núcleo legado, enquanto o produto sempre roda a camada intermediária, que resolve o ótimo exato. Cada camada passou a declarar o próprio critério (`auto_equip_all_strategy_note`);
 - **`legacy_editor.py` abria o editor ao ser executado direto**, entregando um editor sem persistência transacional, sem detecção fail-safe do jogo aberto e sem os bloqueios do Modo Protegido — apesar de a documentação já afirmar que ele recusava, como `hollyedittbh_next.py`;
-- **nenhuma tabela tinha barra de rolagem.** As centenas de posições do armazém — 528 nos saves reais — e os milhares de registros da aba "Todos os itens" só podiam ser percorridos pela roda do mouse, sem indicação de quanto havia abaixo;
+- **nenhuma tabela tinha barra de rolagem.** As 462 posições do armazém e os milhares de registros da aba "Todos os itens" só podiam ser percorridos pela roda do mouse, sem indicação de quanto havia abaixo;
 - **"Definir em todos" aplicava sem confirmação e errava a contagem.** Era a única operação em massa sem confirmação, e o resumo dizia "atualizado em N registros" contando também os registros que não possuem o campo;
 - **"Desbloquear pets" marcava o save como alterado mesmo sem alterar nada**;
 - **falhas de rede apareciam como exceção crua** na barra de status, o que parece defeito do programa em vez de ausência de internet;
@@ -298,20 +298,18 @@ O `HollyEditTBH.spec` passou a empacotar nas três plataformas (VERSIONINFO só 
 
 ### 3.4.0 — geometria do armazém
 
-O editor calculava a página do armazém com **66 espaços**. O jogo usa **49** (grade 7×7). Com o tamanho errado os rótulos ficavam deslocados: a "Armazém 3" do editor caía no meio da aba 4 do jogo, e escolher um destino nas filas mandava o item para uma aba diferente da anunciada. O 49 está confirmado contra um save real cujas abas 1, 2 e 3 tinham 0, 13 e 15 itens — números que batem com 49 e não com 66 — e pelos blocos contíguos do save, que começam exatamente em múltiplos de 49.
+O editor calculava a página do armazém com **66 espaços**. O jogo usa **49** (grade 7×7). Duas consequências, ambas confirmadas contra um save real cujas abas 1, 2 e 3 tinham 0, 13 e 15 itens — números que batem com 49 e não com 66:
+
+- **os rótulos de página ficavam deslocados.** A "Armazém 3" do editor caía no meio da aba 4 do jogo, então escolher um destino nas filas mandava o item para uma aba diferente da anunciada;
+- **o editor gravava fora do alcance do jogo.** Achando que a faixa útil ia até o índice 461, ele escrevia acima de 342, que é o último espaço exibido nas 7 abas. O item ficava íntegro no save e invisível no jogo, sem aviso nenhum. No save examinado eram 26 itens presos assim.
+
+O validador passou a reportar cada item nessa faixa, e **Reparar** os traz de volta para espaços visíveis — só o índice do espaço muda, nada é criado nem apagado.
 
 Nenhum teste pegava isso porque toda a suíte montava os saves sintéticos com o mesmo 66 do produto: fixture e código concordavam no erro. As fixtures passaram a derivar a geometria de `STASH_PAGE_SIZE`.
 
-### 3.4.0 — quantas abas o armazém tem sai do save
+Uma revisão posterior tentou substituir o `STASH_PAGE_COUNT = 7` por uma medida tirada do próprio save — `stashSaveDatas` traz 528 espaços, todos com `IsUnLock` verdadeiro, o que dá 11 páginas de 49 — e foi revertida. O raciocínio partia de que os itens acima do índice 342 num save antigo teriam sido postos pelo jogo; não foram. Aquele save já continha os itens de `ItemGetSourceType 0`, que são os criados por editor, e os índices ocupados (361-378 e 419-426) caem justamente na faixa que a versão de 66 espaços alcançava. Captura da tela do jogo confirma sete abas numeradas de 1 a 7 e a grade 7×7, com ocupação idêntica à do save: aba 1 vazia, aba 2 com 13, abas 5, 6 e 7 cheias com 49.
 
-A correção acima trocou um número inventado por outro: junto com o 49 veio um teto de **7 abas**, e tudo acima do índice 342 passou a ser tratado como "fora do alcance do jogo". Treze saves reais do mesmo jogador, de 11 a 26 de agosto, desmentem o teto:
-
-- `stashSaveDatas` sempre veio com **528 espaços**, todos com `IsUnLock` verdadeiro;
-- o save mais antigo, **anterior a qualquer edição**, já guardava itens postos pelo próprio jogo nos índices 361-378 e 419-426 — acima do teto, em todos os saves diários desde então.
-
-O limite era do editor, não do jogo. Ele fazia o validador acusar 26 itens legítimos, o **Reparar** arrastá-los para longe de onde o jogo os tinha deixado, as abas 8 a 11 sumirem das tabelas e do destino das filas, e o `Automático` dizer "sem espaço" com 185 vagas livres.
-
-Agora o número de abas é medido: `ProEditor.stash_page_count()` lê o maior `Index` de `stashSaveDatas`, e o `STASH_PAGE_COUNT` do módulo só serve de valor inicial para a interface antes do primeiro carregamento. "Inalcançável" voltou a ter o único significado que o save sustenta — **espaço bloqueado**, de aba não comprada —, que é o que o validador reporta e o **Reparar** resolve, movendo só o índice do espaço, sem criar nem apagar nada.
+Os 528 espaços do vetor são folga, não aba escondida. `GameScreenGeometryTests` fixa os números vindos da tela e falha se alguém voltar a derivá-los de `len(stashSaveDatas)`.
 
 ### 3.4.0 — descoberta do save no Linux
 
