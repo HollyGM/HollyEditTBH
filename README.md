@@ -187,12 +187,12 @@ Módulos de apoio sem dependência de `tkinter`, para poderem ser testados sem i
 Executar a mesma suíte usada pelo CI:
 
 ```bash
-python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py
+python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py
 ```
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **199 testes automatizados**:
+A suíte contém **200 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -201,7 +201,7 @@ A suíte contém **199 testes automatizados**:
 | `test_market_ranking_v33.py` | 2 | ordenação da fila de Mercado |
 | `test_hero_profiles_v33.py` | 7 | integridade dos perfis de herói |
 | `test_final_audit_v331.py` | 14 | auditoria da 3.3.1 |
-| `test_hardening_v332.py` | 18 | persistência transacional, conflito, rollback e gates de build |
+| `test_hardening_v332.py` | 19 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
 | `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
 | `test_v342_stash_geometry.py` | 18 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |

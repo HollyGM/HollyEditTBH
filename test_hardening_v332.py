@@ -347,6 +347,32 @@ class BuildReproducibilityTests(unittest.TestCase):
         for module in sorted(path.name for path in base.glob("test_*.py")):
             self.assertIn(module, workflow, f"{module} não é executado pelo CI")
 
+    def test_the_readme_command_runs_the_same_modules_as_the_ci(self):
+        """O README chama seu comando de "a mesma suíte usada pelo CI".
+
+        O teste acima garante que o CI executa todo módulo do repositório, mas
+        nada obrigava o README a acompanhar: a 3.4.2 registrou
+        test_v342_stash_geometry.py no workflow e esqueceu do README, que ficou
+        mandando rodar oito módulos onde o CI roda nove. Quem seguisse a
+        instrução testaria menos do que o CI e passaria sem ver a falha."""
+        base = Path(__file__).resolve().parent
+        readme = (base / "README.md").read_text(encoding="utf-8")
+        workflow = (base / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+        def modulos(texto, prefixo):
+            for linha in texto.splitlines():
+                if prefixo in linha and "test_" in linha:
+                    return sorted(re.findall(r"test_\w+\.py", linha))
+            self.fail(f"linha com {prefixo!r} não encontrada")
+
+        do_readme = modulos(readme, "-m unittest")
+        do_ci = modulos(workflow, "-m unittest")
+        self.assertEqual(do_readme, do_ci, "README e CI executam módulos diferentes")
+        self.assertEqual(
+            do_readme, sorted(path.name for path in base.glob("test_*.py")),
+            "o comando do README não cobre todos os módulos do repositório",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
