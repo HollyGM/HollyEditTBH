@@ -7,6 +7,7 @@ from unittest.mock import patch
 import commemorative_coins as coins
 import intelligence_engine as intelligence
 import legacy_editor
+from legacy_editor import STASH_PAGE_SIZE as PAGE
 import market_intelligence
 import market_policy
 import market_snapshot_guard
@@ -101,9 +102,9 @@ class CommemorativeCoinPlanTests(unittest.TestCase):
         player = minimal_player()
         player["inventorySaveDatas"] = [inventory_slot(index) for index in range(6)]
         # páginas 1 e 2 existem; a 2 recebe a fila
-        player["stashSaveDatas"] = [stash_slot(index) for index in range(66)]
+        player["stashSaveDatas"] = [stash_slot(index) for index in range(PAGE)]
         player["stashSaveDatas"] += [
-            stash_slot(66 + index, unlocked=page_unlocked) for index in range(66)
+            stash_slot(PAGE + index, unlocked=page_unlocked) for index in range(PAGE)
         ]
         items = []
         uid = 500
@@ -115,14 +116,14 @@ class CommemorativeCoinPlanTests(unittest.TestCase):
         for offset, key in enumerate((160009, 160003)):
             uid += 1
             items.append(coin_item(key, uid))
-            player["stashSaveDatas"][66 + offset]["ItemUniqueId"] = uid
+            player["stashSaveDatas"][PAGE + offset]["ItemUniqueId"] = uid
         # ruído: um item que não é moeda
         uid += 1
         items.append({"ItemKey": 110001, "UniqueId": uid, "EnchantData": [], "EnchantCount": [0, 0, 0]})
         player["inventorySaveDatas"][5]["ItemUniqueId"] = uid
         player["itemSaveDatas"] = items
         # ocupa o excedente da página para simular espaço restrito
-        for index in range(66 + 2 + free_slots, 132):
+        for index in range(PAGE + 2 + free_slots, PAGE * 2):
             player["stashSaveDatas"][index]["ItemUniqueId"] = 90000 + index
         return headless(player)
 
@@ -178,7 +179,7 @@ class CommemorativeCoinPlanTests(unittest.TestCase):
         page_two = {
             safe_int(slot["ItemUniqueId"])
             for slot in editor.data["player"]["stashSaveDatas"]
-            if 66 <= safe_int(slot["Index"]) < 132
+            if PAGE <= safe_int(slot["Index"]) < PAGE * 2
         }
         self.assertTrue(set(moved_uids).issubset(page_two))
         inventory = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["inventorySaveDatas"]}
@@ -207,11 +208,11 @@ class CommemorativeCoinCreationTests(unittest.TestCase):
     def build(self, *, free_slots=10, page_unlocked=True):
         player = minimal_player()
         player["inventorySaveDatas"] = [inventory_slot(index) for index in range(4)]
-        player["stashSaveDatas"] = [stash_slot(index) for index in range(66)]
+        player["stashSaveDatas"] = [stash_slot(index) for index in range(PAGE)]
         player["stashSaveDatas"] += [
-            stash_slot(66 + index, unlocked=page_unlocked) for index in range(66)
+            stash_slot(PAGE + index, unlocked=page_unlocked) for index in range(PAGE)
         ]
-        for index in range(66 + free_slots, 132):
+        for index in range(PAGE + free_slots, PAGE * 2):
             player["stashSaveDatas"][index]["ItemUniqueId"] = 90000 + index
         return headless(player)
 
@@ -226,7 +227,7 @@ class CommemorativeCoinCreationTests(unittest.TestCase):
         page_two = {
             safe_int(slot["ItemUniqueId"])
             for slot in editor.data["player"]["stashSaveDatas"]
-            if 66 <= safe_int(slot["Index"]) < 132
+            if PAGE <= safe_int(slot["Index"]) < PAGE * 2
         }
         self.assertIn(safe_int(coin["UniqueId"]), page_two)
         found_uids = [safe_int(row["item"]["UniqueId"]) for row in editor.commemorative_coin_rows()]
@@ -265,7 +266,7 @@ class CommemorativeCoinCreationTests(unittest.TestCase):
         page_two = {
             safe_int(slot["ItemUniqueId"])
             for slot in editor.data["player"]["stashSaveDatas"]
-            if 66 <= safe_int(slot["Index"]) < 132
+            if PAGE <= safe_int(slot["Index"]) < PAGE * 2
         }
         self.assertIn(coin_uid, page_two)
 
@@ -287,7 +288,7 @@ class CommemorativeCoinCreationTests(unittest.TestCase):
 class StashPageStateTests(unittest.TestCase):
     def test_locked_page_is_detected_even_when_it_has_no_items(self):
         player = minimal_player()
-        player["stashSaveDatas"] = [stash_slot(index, unlocked=index < 66) for index in range(132)]
+        player["stashSaveDatas"] = [stash_slot(index, unlocked=index < PAGE) for index in range(PAGE * 2)]
         editor = headless(player)
         self.assertTrue(editor.stash_page_is_unlocked(1))
         self.assertFalse(editor.stash_page_is_unlocked(2))
@@ -310,7 +311,7 @@ class StashPageStateTests(unittest.TestCase):
 
     def test_summary_separates_blocked_page_from_empty_result(self):
         player = minimal_player()
-        player["stashSaveDatas"] = [stash_slot(index, unlocked=index < 66) for index in range(132)]
+        player["stashSaveDatas"] = [stash_slot(index, unlocked=index < PAGE) for index in range(PAGE * 2)]
         editor = headless(player)
         self.assertIn("bloqueado", editor.queue_summary_text(2, 0, 7, "pré-candidato"))
         self.assertIn("Nenhum pré-candidato", editor.queue_summary_text(1, 0, 0, "pré-candidato"))
@@ -320,7 +321,7 @@ class StashPageStateTests(unittest.TestCase):
 
     def test_full_page_is_not_reported_as_lacking_candidates(self):
         player = minimal_player()
-        player["stashSaveDatas"] = [stash_slot(index, uid=1000 + index) for index in range(66)]
+        player["stashSaveDatas"] = [stash_slot(index, uid=1000 + index) for index in range(PAGE)]
         editor = headless(player)
         self.assertIn("está cheio", editor.queue_summary_text(1, 0, 12, "duplicado"))
 
@@ -492,7 +493,7 @@ class MarketCandidateTests(unittest.TestCase):
     def build_editor(self, item_key, *, source_type=1):
         player = minimal_player()
         player["inventorySaveDatas"] = [inventory_slot(0, 700)]
-        player["stashSaveDatas"] = [stash_slot(index) for index in range(66)]
+        player["stashSaveDatas"] = [stash_slot(index) for index in range(PAGE)]
         item = coin_item(item_key, 700)
         item["ItemGetSourceType"] = source_type
         player["itemSaveDatas"] = [item]
@@ -518,7 +519,7 @@ class MarketCandidateTests(unittest.TestCase):
     def test_the_round_limit_does_not_hide_the_size_of_the_pool(self):
         player = minimal_player()
         player["inventorySaveDatas"] = [inventory_slot(index, 800 + index) for index in range(12)]
-        player["stashSaveDatas"] = [stash_slot(index) for index in range(66)]
+        player["stashSaveDatas"] = [stash_slot(index) for index in range(PAGE)]
         player["itemSaveDatas"] = [coin_item(160010, 800 + index) for index in range(12)]
         editor = headless(player)
         rows = editor.market_candidates(1, 20)

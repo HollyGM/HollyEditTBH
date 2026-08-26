@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from legacy_editor import STASH_PAGE_SIZE as PAGE
 from hollyedittbh_final import FinalProEditor, VerifiedSaveFile
 from market_intelligence import MarketQuote, MarketSnapshot
 from market_snapshot_guard import prefer_snapshot
@@ -98,7 +99,7 @@ class ProtectedModeFinalTests(unittest.TestCase):
 
     def test_market_round_capacity_uses_configured_slot_limit(self):
         player = minimal_player()
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = final_headless({"account": {}, "player": player}, [])
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
             self.assertEqual(editor.market_round_capacity(7), 4)
@@ -110,17 +111,17 @@ class ProtectedModeFinalTests(unittest.TestCase):
         sys._getframe e devolvia o limite da rodada em vez do espaço real. O
         limite agora tem nome próprio em market_round_capacity."""
         player = minimal_player()
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = final_headless({"account": {}, "player": player}, [])
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
-            self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+            self.assertEqual(editor.free_slot_count("Armazem 7"), PAGE)
             self.assertEqual(editor.market_round_capacity(7), 4)
-            self.assertEqual(editor.free_slot_count("Armazem 7"), 66)
+            self.assertEqual(editor.free_slot_count("Armazem 7"), PAGE)
 
     def test_market_round_capacity_is_stable_across_repeated_reads(self):
         """Sem estado de uma leitura só: chamar duas vezes devolve o mesmo número."""
         player = minimal_player()
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = final_headless({"account": {}, "player": player}, [])
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
             self.assertEqual([editor.market_round_capacity(7) for _ in range(3)], [4, 4, 4])
