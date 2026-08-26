@@ -192,7 +192,7 @@ python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_mar
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **198 testes automatizados**:
+A suíte contém **199 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -204,7 +204,7 @@ A suíte contém **198 testes automatizados**:
 | `test_hardening_v332.py` | 18 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
 | `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
-| `test_v342_stash_geometry.py` | 17 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |
+| `test_v342_stash_geometry.py` | 18 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 

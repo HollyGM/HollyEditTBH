@@ -119,9 +119,13 @@ SLOT_NAMES = dict(INTELLIGENCE_SLOT_NAMES)
 STASH_PAGE_SIZE = 49
 STASH_PAGE_COUNT = 7
 
-#: Último índice que a interface do jogo consegue exibir. ``stashSaveDatas``
-#: costuma vir maior que isso; escrever além deste ponto deixa o item gravado no
-#: save e invisível no jogo, sem qualquer aviso.
+#: Quantos espaços do armazém a interface do jogo exibe — uma **contagem**, não
+#: um índice: os espaços visíveis vão de 0 a ``STASH_REACHABLE_SLOTS - 1``, e a
+#: comparação certa é ``Index < STASH_REACHABLE_SLOTS``. Com 7 abas de 49 são 343
+#: espaços e o último índice é 342.
+#:
+#: ``stashSaveDatas`` costuma vir maior que isso; escrever além do último espaço
+#: visível deixa o item gravado no save e invisível no jogo, sem qualquer aviso.
 #:
 #: **Não derive este limite de ``len(stashSaveDatas)``.** O save aloca 528
 #: espaços, todos com ``IsUnLock`` verdadeiro, e o jogo mostra 343 — a diferença
