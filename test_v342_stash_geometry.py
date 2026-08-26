@@ -69,7 +69,11 @@ def headless(player, database=None):
 
 
 def full_stash(total_slots=None, unlocked=True):
-    return [stash_slot(index, unlocked=unlocked) for index in range(total_slots or STASH_REACHABLE_SLOTS)]
+    # `total_slots or STASH_REACHABLE_SLOTS` devolveria o armazém cheio para
+    # total_slots=0, escondendo um caso de teste em vez de montá-lo.
+    if total_slots is None:
+        total_slots = STASH_REACHABLE_SLOTS
+    return [stash_slot(index, unlocked=unlocked) for index in range(total_slots)]
 
 
 class StashGeometryTests(unittest.TestCase):
@@ -79,6 +83,30 @@ class StashGeometryTests(unittest.TestCase):
         self.assertEqual(STASH_PAGE_SIZE, 7 * 7)
         self.assertEqual(STASH_REACHABLE_SLOTS, STASH_PAGE_SIZE * STASH_PAGE_COUNT)
         self.assertEqual(STASH_REACHABLE_SLOTS, 343)
+
+    def test_the_limit_is_a_count_and_the_last_visible_index_is_one_below(self):
+        """``STASH_REACHABLE_SLOTS`` é contagem, não índice.
+
+        Trocar ``<`` por ``<=`` em qualquer um dos dois usos, ou ler o 343 como
+        último índice, faz o editor gravar no primeiro espaço que o jogo não
+        desenha — que é o defeito inteiro."""
+        player = minimal_player()
+        player["stashSaveDatas"] = full_stash(STASH_REACHABLE_SLOTS + 1)
+        ultimo, primeiro_invisivel = STASH_REACHABLE_SLOTS - 1, STASH_REACHABLE_SLOTS
+        self.assertEqual(ultimo, 342)
+        editor = headless(player)
+
+        for index, uid in ((ultimo, 601), (primeiro_invisivel, 602)):
+            item = gear(uid)
+            player["itemSaveDatas"].append(item)
+            editor.items.append(item)
+            editor.items_by_uid[uid] = item
+            player["stashSaveDatas"][index]["ItemUniqueId"] = uid
+
+        presos = [safe_int(row["slot"].get("Index")) for row in editor.unreachable_stash_rows()]
+        self.assertEqual(presos, [primeiro_invisivel], "o 342 é visível; o 343 não é")
+        self.assertEqual(editor.stash_page_for_index(ultimo), STASH_PAGE_COUNT)
+        self.assertEqual(editor.stash_page_for_index(primeiro_invisivel), STASH_PAGE_COUNT + 1)
 
     def test_page_boundaries_reproduce_a_real_save(self):
         """Um save real tinha as abas 1, 2 e 3 com 0, 13 e 15 itens.
