@@ -192,7 +192,7 @@ python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_mar
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **181 testes automatizados**:
+A suíte contém **193 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -204,6 +204,7 @@ A suíte contém **181 testes automatizados**:
 | `test_hardening_v332.py` | 18 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
 | `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
+| `test_v342_stash_geometry.py` | 12 | tamanho da página do armazém e itens fora das abas exibidas |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 
@@ -294,6 +295,17 @@ Três pontos assumiam Windows e quebravam calado fora dele:
 Além disso, a fonte `Segoe UI` era pedida por nome fixo em 36 lugares. Ela não existe no Linux nem no macOS, e pedir uma família ausente faz o Tk cair numa fonte bitmap antiga. A família passou a ser resolvida em tempo de execução entre as instaladas.
 
 O `HollyEditTBH.spec` passou a empacotar nas três plataformas (VERSIONINFO só no Windows, `BUNDLE` .app no macOS, UPX desligado no macOS para não invalidar a assinatura), as dependências exclusivas do Windows ganharam marcador de plataforma, e o CI compila, testa e faz smoke test do executável em `windows-latest`, `ubuntu-latest` e `macos-latest`.
+
+### 3.4.0 — geometria do armazém
+
+O editor calculava a página do armazém com **66 espaços**. O jogo usa **49** (grade 7×7). Duas consequências, ambas confirmadas contra um save real cujas abas 1, 2 e 3 tinham 0, 13 e 15 itens — números que batem com 49 e não com 66:
+
+- **os rótulos de página ficavam deslocados.** A "Armazém 3" do editor caía no meio da aba 4 do jogo, então escolher um destino nas filas mandava o item para uma aba diferente da anunciada;
+- **o editor gravava fora do alcance do jogo.** Achando que a faixa útil ia até o índice 461, ele escrevia acima de 342, que é o último espaço exibido nas 7 abas. O item ficava íntegro no save e invisível no jogo, sem aviso nenhum. No save examinado eram 26 itens presos assim.
+
+O validador passou a reportar cada item nessa faixa, e **Reparar** os traz de volta para espaços visíveis — só o índice do espaço muda, nada é criado nem apagado.
+
+Nenhum teste pegava isso porque toda a suíte montava os saves sintéticos com o mesmo 66 do produto: fixture e código concordavam no erro. As fixtures passaram a derivar a geometria de `STASH_PAGE_SIZE`.
 
 ### 3.4.0 — descoberta do save no Linux
 

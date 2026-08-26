@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from legacy_editor import STASH_PAGE_SIZE as PAGE
 import save_layer
 from save_layer import SaveFile
 from tbh_save_editor import (
@@ -223,7 +224,7 @@ class DataValidationTests(unittest.TestCase):
         player = minimal_player()
         player["itemSaveDatas"] = items
         player["inventorySaveDatas"] = [storage_slot(i, i + 1) for i in range(4)]
-        player["stashSaveDatas"] = [storage_slot(396 + i, 0, stash=True) for i in range(10)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + i, 0, stash=True) for i in range(10)]
         editor = headless_editor({"account": {}, "player": player}, database)
 
         candidates = editor.market_candidates(7, 10)
@@ -248,7 +249,7 @@ class DataValidationTests(unittest.TestCase):
         player = minimal_player()
         player["itemSaveDatas"] = items
         player["inventorySaveDatas"] = [storage_slot(i, 11 + i) for i in range(4)]
-        player["stashSaveDatas"] = [storage_slot(330 + i, 0, stash=True) for i in range(10)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 5 + i, 0, stash=True) for i in range(10)]
         editor = headless_editor({"account": {}, "player": player}, database)
 
         rows = editor.recycle_candidates(6, 10, "LEGENDARY")
@@ -336,10 +337,10 @@ class DataValidationTests(unittest.TestCase):
         player = minimal_player()
         player["itemSaveDatas"] = items
         player["inventorySaveDatas"] = [storage_slot(0, 41), storage_slot(1, 42)]
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = headless_editor({"account": {}, "player": player}, database)
 
-        candidates = editor.market_candidates(7, 66)
+        candidates = editor.market_candidates(7, PAGE)
         self.assertEqual({row["item"]["UniqueId"] for row in candidates}, {41, 42})
         self.assertEqual(editor.apply_storage_queue(candidates, 7), 2)
         filled = {slot["ItemUniqueId"] for slot in player["stashSaveDatas"] if slot["ItemUniqueId"]}
@@ -349,7 +350,7 @@ class DataValidationTests(unittest.TestCase):
         database = [{"ItemKey": "300101", "Name": "Espada local", "Rarity": "BEYOND", "Type": "GEAR", "StatTypes": []}]
         player = minimal_player()
         player["inventorySaveDatas"] = [storage_slot(0)]
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = headless_editor({"account": {}, "player": player}, database)
         item = editor.new_item(300101, enchanted=False)
         player["itemSaveDatas"].append(item)
@@ -358,7 +359,7 @@ class DataValidationTests(unittest.TestCase):
         editor.session_created_uids.add(item["UniqueId"])
         player["inventorySaveDatas"][0]["ItemUniqueId"] = item["UniqueId"]
 
-        self.assertEqual(editor.market_candidates(7, 66), [])
+        self.assertEqual(editor.market_candidates(7, PAGE), [])
 
     def test_protected_mode_limits_bulk_item_creation(self):
         database = [{"ItemKey": "300101", "Name": "Sword", "Rarity": "COMMON", "Type": "GEAR", "StatTypes": []}]

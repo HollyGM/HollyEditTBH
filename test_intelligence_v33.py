@@ -4,6 +4,7 @@ import random
 import unittest
 from unittest.mock import patch
 
+from legacy_editor import STASH_PAGE_SIZE as PAGE
 from catalog_update import validate_catalog_candidate
 from intelligence_engine import greedy_assignment, optimal_unique_assignment, score_item, slot_prefixes
 from market_intelligence import MarketQuote, market_eligibility, market_priority, parse_market_search_html
@@ -188,10 +189,10 @@ class MarketIntelligenceTests(unittest.TestCase):
         player = minimal_player()
         player["itemSaveDatas"] = items
         player["inventorySaveDatas"] = [storage_slot(index, index + 1) for index in range(8)]
-        player["stashSaveDatas"] = [storage_slot(396 + index, 0, stash=True) for index in range(66)]
+        player["stashSaveDatas"] = [storage_slot(PAGE * 6 + index, 0, stash=True) for index in range(PAGE)]
         editor = enhanced_headless({"account": {}, "player": player}, database)
         with patch.dict("os.environ", {"HOLLYEDIT_MARKET_SLOTS": "4"}):
-            candidates = editor.market_candidates(7, 66)
+            candidates = editor.market_candidates(7, PAGE)
         self.assertEqual(len(candidates), 4)
 
 

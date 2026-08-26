@@ -107,8 +107,19 @@ HERO_NAMES = {
 # do módulo em tempo de importação.
 SLOT_NAMES = dict(INTELLIGENCE_SLOT_NAMES)
 
-STASH_PAGE_SIZE = 66
+#: Uma aba do armazém tem 7x7 espaços. Até a 3.4.0 o editor usava 66, número que
+#: não corresponde a nenhuma aba do jogo: com ele a "Armazém 3" do editor caía no
+#: meio da aba 4 do jogo, e os destinos das filas mandavam item para a página
+#: errada. Confirmado contra um save real — abas com 0, 13 e 15 itens batem com
+#: 49 e não com 66 — e pelos blocos contíguos, que começam exatamente em
+#: múltiplos de 49.
+STASH_PAGE_SIZE = 49
 STASH_PAGE_COUNT = 7
+
+#: Último índice que a interface do jogo consegue exibir. ``stashSaveDatas``
+#: costuma vir maior que isso; escrever além deste ponto deixa o item gravado no
+#: save e invisível no jogo, sem qualquer aviso.
+STASH_REACHABLE_SLOTS = STASH_PAGE_SIZE * STASH_PAGE_COUNT
 STASH_TARGETS = [f"Armazem {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 STASH_DISPLAY_TARGETS = [f"Armazém {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 ITEM_DESTINATIONS = ["Automatico", "Inventario", *STASH_TARGETS]
@@ -1931,8 +1942,58 @@ class ProEditor:
         for uid in item_map:
             if uid not in refs:
                 add("AVISO", "orphan_item", f"Item {uid} não possui local; aparece somente na aba Todos os itens.")
+        for row in self.unreachable_stash_rows():
+            add(
+                "AVISO",
+                "unreachable_slot",
+                f"Item {safe_int(row['item'].get('UniqueId'))} está no espaço {safe_int(row['slot'].get('Index'))} "
+                f"do armazém, além da última aba que o jogo exibe. Ele existe no save, mas não aparece no jogo. "
+                f"Use Reparar para trazê-lo de volta.",
+            )
         self.last_validation = issues
         return issues
+
+    def unreachable_stash_rows(self) -> list[dict]:
+        """Itens gravados em espaços do armazém que o jogo não consegue exibir.
+
+        ``stashSaveDatas`` costuma trazer mais espaços do que as abas mostradas.
+        Enquanto o editor calculou a página com o tamanho errado, ele encheu essa
+        faixa: o item continua íntegro no save e some da tela do jogo."""
+        if not self.data:
+            return []
+        rows: list[dict] = []
+        for slot in self.data["player"].get("stashSaveDatas", []):
+            if safe_int(slot.get("Index")) < STASH_REACHABLE_SLOTS:
+                continue
+            item = self.items_by_uid.get(safe_int(slot.get("ItemUniqueId")))
+            if item is not None:
+                rows.append({"slot": slot, "item": item})
+        return rows
+
+    def rescue_unreachable_stash_items(self) -> tuple[int, int]:
+        """Traz os itens presos para espaços que o jogo exibe.
+
+        Devolve ``(resgatados, sem espaço)``. Nada é criado nem apagado: só o
+        índice do espaço muda."""
+        pendentes = self.unreachable_stash_rows()
+        if not pendentes:
+            return 0, 0
+        livres = [
+            slot for slot in self.data["player"].get("stashSaveDatas", [])
+            if safe_int(slot.get("Index")) < STASH_REACHABLE_SLOTS
+            and not safe_int(slot.get("ItemUniqueId"))
+            and self.slot_is_unlocked("stashSaveDatas", slot)
+        ]
+        livres.sort(key=lambda slot: safe_int(slot.get("Index")))
+        resgatados = 0
+        for row in pendentes:
+            if not livres:
+                break
+            destino = livres.pop(0)
+            destino["ItemUniqueId"] = safe_int(row["slot"].get("ItemUniqueId"))
+            row["slot"]["ItemUniqueId"] = 0
+            resgatados += 1
+        return resgatados, len(pendentes) - resgatados
 
     def repair_save(self, show_message: bool = True) -> int:
         if not self.data:
@@ -2010,6 +2071,10 @@ class ProEditor:
             if self.free_slot_count("Automatico") > 0:
                 self.place_item(uid, "Automatico")
                 changes += 1
+        # Itens presos além da última aba exibida pelo jogo: só o índice muda,
+        # nada é criado nem apagado.
+        resgatados, _sem_espaco = self.rescue_unreachable_stash_items()
+        changes += resgatados
         self.items = list(player.get("itemSaveDatas", []))
         self.rebuild_item_index()
         if changes:
