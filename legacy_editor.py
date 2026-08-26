@@ -107,25 +107,29 @@ HERO_NAMES = {
 # do módulo em tempo de importação.
 SLOT_NAMES = dict(INTELLIGENCE_SLOT_NAMES)
 
-#: Uma aba do armazém tem 7x7 espaços. Até a 3.4.0 o editor usava 66, número que
-#: não corresponde a nenhuma aba do jogo: com ele a "Armazém 3" do editor caía no
-#: meio da aba 4 do jogo, e os destinos das filas mandavam item para a página
-#: errada. Confirmado contra um save real — abas com 0, 13 e 15 itens batem com
-#: 49 e não com 66 — e pelos blocos contíguos, que começam exatamente em
-#: múltiplos de 49.
-STASH_PAGE_SIZE = 49
-
-#: Quantas abas assumir **enquanto nenhum save está carregado**. O número real de
-#: um save sai do próprio save, em ``ProEditor.stash_page_count()``.
+#: Uma aba do armazém tem 7x7 espaços e o jogo mostra 7 abas. Até a 3.4.0 o
+#: editor usava 66, número que não corresponde a nenhuma aba do jogo: com ele a
+#: "Armazém 3" do editor caía no meio da aba 4 do jogo, e os destinos das filas
+#: mandavam item para a página errada.
 #:
-#: A 3.4.2 fixou 7 aqui e tratou tudo acima do índice 342 como "fora de alcance".
-#: Era invenção do editor: em treze saves reais, do dia 11 ao dia 26 de agosto,
-#: ``stashSaveDatas`` sempre veio com 528 espaços e todos com ``IsUnLock``
-#: verdadeiro; o save mais antigo — anterior a qualquer edição — já guardava
-#: itens do próprio jogo nos índices 361-378 e 419-426. Presumir um teto fazia o
-#: validador acusar 26 itens legítimos e o Reparar arrastá-los para longe de onde
-#: o jogo os tinha posto.
-STASH_PAGE_COUNT = 11
+#: Os dois números estão confirmados por captura da tela do jogo: a grade é 7x7,
+#: as abas vão de 1 a 7, e a ocupação de cada uma bate com o save — aba 1 vazia,
+#: aba 2 com 13 itens, abas 5, 6 e 7 cheias com 49. Os blocos contíguos do save
+#: também começam exatamente em múltiplos de 49.
+STASH_PAGE_SIZE = 49
+STASH_PAGE_COUNT = 7
+
+#: Último índice que a interface do jogo consegue exibir. ``stashSaveDatas``
+#: costuma vir maior que isso; escrever além deste ponto deixa o item gravado no
+#: save e invisível no jogo, sem qualquer aviso.
+#:
+#: **Não derive este limite de ``len(stashSaveDatas)``.** O save aloca 528
+#: espaços, todos com ``IsUnLock`` verdadeiro, e o jogo mostra 343 — a diferença
+#: é folga do vetor, não aba escondida. A 3.4.2 tentou medir o número de abas
+#: assim e chegou a 11, o que fez o editor oferecer destinos que a tela do jogo
+#: não tem. Os itens que ocupam os índices acima de 342 num save real vieram do
+#: editor antigo, que escrevia até o 461; é exatamente o que o resgate desfaz.
+STASH_REACHABLE_SLOTS = STASH_PAGE_SIZE * STASH_PAGE_COUNT
 STASH_TARGETS = [f"Armazem {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 STASH_DISPLAY_TARGETS = [f"Armazém {page}" for page in range(1, STASH_PAGE_COUNT + 1)]
 ITEM_DESTINATIONS = ["Automatico", "Inventario", *STASH_TARGETS]
@@ -1197,10 +1201,6 @@ class ProEditor:
                 state="readonly",
                 width=16,
             )
-            # A tabela é montada uma vez, antes de haver save. Quantas abas o
-            # armazém tem é dado do save, então a lista é reescrita a cada
-            # carregamento em sync_stash_page_filter().
-            self.stash_page_filter = page_filter
             page_filter.pack(side=LEFT, padx=(4, 12))
             page_filter.bind("<<ComboboxSelected>>", lambda _e: self.refresh_tables())
         ttk.Label(options_row, text="Raridade").pack(side=LEFT)
@@ -1957,8 +1957,8 @@ class ProEditor:
                 "AVISO",
                 "unreachable_slot",
                 f"Item {safe_int(row['item'].get('UniqueId'))} está no espaço {safe_int(row['slot'].get('Index'))} "
-                f"do armazém, numa aba bloqueada. Ele existe no save, mas não aparece no jogo. "
-                f"Use Reparar para trazê-lo para uma aba liberada.",
+                f"do armazém, além da última aba que o jogo exibe. Ele existe no save, mas não aparece no jogo. "
+                f"Use Reparar para trazê-lo de volta.",
             )
         self.last_validation = issues
         return issues
@@ -1966,19 +1966,14 @@ class ProEditor:
     def unreachable_stash_rows(self) -> list[dict]:
         """Itens gravados em espaços do armazém que o jogo não consegue exibir.
 
-        Um espaço só é inalcançável quando o save o traz **bloqueado**: o jogo não
-        desenha a aba que o jogador não comprou, e o item some da tela sem sumir
-        do save.
-
-        Não confundir com "índice alto". A 3.4.2 marcava como preso tudo acima do
-        índice 342, número que o editor inventou: nos saves reais o armazém vem
-        com 528 espaços, todos desbloqueados, e o próprio jogo guarda itens muito
-        acima daquele ponto. Ver o comentário de ``STASH_PAGE_COUNT``."""
+        ``stashSaveDatas`` costuma trazer mais espaços do que as abas mostradas.
+        Enquanto o editor calculou a página com o tamanho errado, ele encheu essa
+        faixa: o item continua íntegro no save e some da tela do jogo."""
         if not self.data:
             return []
         rows: list[dict] = []
         for slot in self.data["player"].get("stashSaveDatas", []):
-            if self.slot_is_unlocked("stashSaveDatas", slot):
+            if safe_int(slot.get("Index")) < STASH_REACHABLE_SLOTS:
                 continue
             item = self.items_by_uid.get(safe_int(slot.get("ItemUniqueId")))
             if item is not None:
@@ -1995,7 +1990,8 @@ class ProEditor:
             return 0, 0
         livres = [
             slot for slot in self.data["player"].get("stashSaveDatas", [])
-            if not safe_int(slot.get("ItemUniqueId"))
+            if safe_int(slot.get("Index")) < STASH_REACHABLE_SLOTS
+            and not safe_int(slot.get("ItemUniqueId"))
             and self.slot_is_unlocked("stashSaveDatas", slot)
         ]
         livres.sort(key=lambda slot: safe_int(slot.get("Index")))
@@ -2783,34 +2779,14 @@ class ProEditor:
     def stash_local_slot(self, index: int) -> int:
         return index % STASH_PAGE_SIZE + 1
 
-    def stash_page_count(self) -> int:
-        """Quantas abas o armazém deste save tem — medido, não presumido.
-
-        O save descreve todos os espaços que possui, um por ``Index``; a última
-        aba é a do maior índice. Sem save carregado sobra ``STASH_PAGE_COUNT``,
-        que só serve para montar as listas da interface antes do primeiro
-        carregamento."""
-        slots = self.data["player"].get("stashSaveDatas", []) if self.data else []
-        maior = max((safe_int(slot.get("Index"), -1) for slot in slots), default=-1)
-        if maior < 0:
-            return STASH_PAGE_COUNT
-        return maior // STASH_PAGE_SIZE + 1
-
-    def stash_targets(self) -> list[str]:
-        return [f"Armazem {page}" for page in range(1, self.stash_page_count() + 1)]
-
-    def stash_display_targets(self) -> list[str]:
-        return [f"Armazém {page}" for page in range(1, self.stash_page_count() + 1)]
-
     def destination_sources(self, target: str) -> list[tuple[str, int | None]]:
-        paginas = self.stash_page_count()
         if target == "Automatico":
-            return [("inventorySaveDatas", None), *[("stashSaveDatas", page) for page in range(1, paginas + 1)]]
+            return [("inventorySaveDatas", None), *[("stashSaveDatas", page) for page in range(1, STASH_PAGE_COUNT + 1)]]
         if target == "Armazem":
-            return [("stashSaveDatas", page) for page in range(1, paginas + 1)]
+            return [("stashSaveDatas", page) for page in range(1, STASH_PAGE_COUNT + 1)]
         if target.startswith("Armazem "):
             page = safe_int(target.rsplit(" ", 1)[-1])
-            if 1 <= page <= paginas:
+            if 1 <= page <= STASH_PAGE_COUNT:
                 return [("stashSaveDatas", page)]
         return [("inventorySaveDatas", None)]
 
@@ -3021,7 +2997,7 @@ class ProEditor:
         for source in ("inventorySaveDatas", "stashSaveDatas"):
             for slot in player.get(source, []):
                 index = safe_int(slot.get("Index"))
-                if source == "stashSaveDatas" and self.stash_page_for_index(index) > self.stash_page_count():
+                if source == "stashSaveDatas" and self.stash_page_for_index(index) > STASH_PAGE_COUNT:
                     continue
                 item = self.items_by_uid.get(safe_int(slot.get("ItemUniqueId")))
                 if item and self.item_db(item).get("Type") == "GEAR":
@@ -3815,9 +3791,8 @@ class ProEditor:
         )
         campaign_apply.pack(anchor="e", pady=6)
 
-        stash_pages = self.stash_display_targets()
-        unlocked_pages = [page for page in range(1, self.stash_page_count() + 1) if self.stash_page_is_unlocked(page)]
-        default_queue_page = f"Armazém {unlocked_pages[-1]}" if unlocked_pages else stash_pages[0]
+        unlocked_pages = [page for page in range(1, STASH_PAGE_COUNT + 1) if self.stash_page_is_unlocked(page)]
+        default_queue_page = f"Armazém {unlocked_pages[-1]}" if unlocked_pages else STASH_DISPLAY_TARGETS[0]
         market_page_var = StringVar(value=default_queue_page)
         market_count_var = StringVar(value=str(self.configured_market_slots()))
         market_summary_var = StringVar(value="Clique em Analisar; nada será movido sem confirmação.")
@@ -3831,7 +3806,7 @@ class ProEditor:
         market_bar = ttk.Frame(market, style="Panel.TFrame")
         market_bar.pack(fill=X)
         ttk.Label(market_bar, text="Destino").pack(side=LEFT)
-        ttk.Combobox(market_bar, textvariable=market_page_var, values=stash_pages, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+        ttk.Combobox(market_bar, textvariable=market_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
         ttk.Label(market_bar, text="Slots nesta rodada").pack(side=LEFT)
         ttk.Spinbox(market_bar, from_=1, to=max(1, self.configured_market_slots()), textvariable=market_count_var, width=6).pack(side=LEFT, padx=6)
         ttk.Button(market_bar, text="Avisos oficiais", command=lambda: webbrowser.open(MARKET_OFFICIAL_NEWS_URL)).pack(side=RIGHT)
@@ -3865,7 +3840,7 @@ class ProEditor:
         market_actions.pack(fill=X)
 
         def selected_page(var: StringVar) -> int:
-            return max(1, min(self.stash_page_count(), safe_int(normalize_search_text(var.get()).rsplit(" ", 1)[-1], 1)))
+            return max(1, min(STASH_PAGE_COUNT, safe_int(normalize_search_text(var.get()).rsplit(" ", 1)[-1], 1)))
 
         def analyze_market() -> None:
             page = selected_page(market_page_var)
@@ -3942,7 +3917,7 @@ class ProEditor:
         recycle_bar = ttk.Frame(recycle, style="Panel.TFrame")
         recycle_bar.pack(fill=X)
         ttk.Label(recycle_bar, text="Destino da fila").pack(side=LEFT)
-        ttk.Combobox(recycle_bar, textvariable=recycle_page_var, values=stash_pages, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+        ttk.Combobox(recycle_bar, textvariable=recycle_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
         ttk.Label(recycle_bar, text="Raridade máxima").pack(side=LEFT)
         recycle_rarity_values = [RARITY_LABELS[key] for key in ("COMMON", "UNCOMMON", "RARE", "LEGENDARY", "IMMORTAL")]
         ttk.Combobox(recycle_bar, textvariable=recycle_rarity_var, values=recycle_rarity_values, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
@@ -4015,7 +3990,7 @@ class ProEditor:
         coin_bar = ttk.Frame(coins_body, style="Panel.TFrame")
         coin_bar.pack(fill=X)
         ttk.Label(coin_bar, text="Reunir em").pack(side=LEFT)
-        ttk.Combobox(coin_bar, textvariable=coin_page_var, values=stash_pages, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+        ttk.Combobox(coin_bar, textvariable=coin_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
         tk.Label(
             coins_body,
             text=f"{coins.USAGE_NOTICE} {coins.MARKET_NOTICE}",
@@ -4105,7 +4080,7 @@ class ProEditor:
         ttk.Label(coin_add_bar, text="Quantidade").pack(side=LEFT)
         ttk.Spinbox(coin_add_bar, from_=1, to=999, textvariable=coin_add_quantity_var, width=6).pack(side=LEFT, padx=(6, 14))
         ttk.Label(coin_add_bar, text="Armazém").pack(side=LEFT)
-        ttk.Combobox(coin_add_bar, textvariable=coin_add_page_var, values=stash_pages, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
+        ttk.Combobox(coin_add_bar, textvariable=coin_add_page_var, values=STASH_DISPLAY_TARGETS, state="readonly", width=15).pack(side=LEFT, padx=(6, 14))
 
         def add_coin() -> None:
             definition = coin_choice_by_label.get(coin_add_choice_var.get())
@@ -4460,7 +4435,7 @@ class ProEditor:
         ttk.Combobox(
             win,
             textvariable=target_var,
-            values=[DESTINATION_LABELS["Inventario"], *self.stash_display_targets()],
+            values=[DESTINATION_LABELS["Inventario"], *STASH_DISPLAY_TARGETS],
             state="readonly",
             width=24,
         ).pack(fill=X, padx=20, pady=(3, 8))
@@ -4576,27 +4551,10 @@ class ProEditor:
                 pass
         self.table_refresh_job = self.root.after(160, self.refresh_tables)
 
-    def sync_stash_page_filter(self) -> None:
-        """Reescreve o filtro de páginas com as abas que este save realmente tem.
-
-        Se a aba escolhida deixou de existir (outro save, com armazém menor), a
-        seleção volta para "Todas as páginas" em vez de filtrar tudo fora."""
-        combo = getattr(self, "stash_page_filter", None)
-        if combo is None:
-            return
-        valores = ["Todas as páginas", *self.stash_display_targets()]
-        try:
-            combo.configure(values=valores)
-        except tk.TclError:
-            return
-        if self.stash_page_var.get() not in valores:
-            self.stash_page_var.set(valores[0])
-
     def refresh_tables(self) -> None:
         self.table_refresh_job = None
         if not self.data:
             return
-        self.sync_stash_page_filter()
         query = self.filter_var.get().strip()
         rarity_filter = self.rarity_filter_var.get()
         type_filter = self.type_filter_var.get()
@@ -4640,7 +4598,7 @@ class ProEditor:
         for slot in player.get("stashSaveDatas", []):
             index = safe_int(slot.get("Index"))
             page = self.stash_page_for_index(index)
-            if page > self.stash_page_count():
+            if page > STASH_PAGE_COUNT:
                 continue
             if selected_page != "Todas as páginas" and selected_page != f"Armazém {page}":
                 continue
