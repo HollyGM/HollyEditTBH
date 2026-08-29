@@ -2128,6 +2128,12 @@ class ProEditor:
         table.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
 
         def refresh() -> None:
+            # repair() abre um messagebox modal antes de chamar refresh(); se a
+            # janela de validação for fechada durante esse modal (Esc está ligado
+            # a win.destroy), a Treeview já não existe e tree.delete levantaria
+            # TclError. winfo_exists é seguro de chamar em widget destruído.
+            if not tree.winfo_exists():
+                return
             issues = self.validate_save()
             tree.delete(*tree.get_children())
             for issue in issues:
