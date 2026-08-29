@@ -540,5 +540,74 @@ class ItemLifecycleTests(unittest.TestCase):
         self.assertEqual(editor.next_unique_id(), 81)
 
 
+class GroupedPlacementTests(unittest.TestCase):
+    """place_item_grouped coloca o item junto dos seus semelhantes.
+
+    O jogo guarda inventário e armazém ordenados por ItemKey e reordena ao abrir.
+    A colocação por primeiro-espaço-livre deixava um equipamento duplicado no meio
+    dos materiais: no editor a cópia aparecia longe do original e, no jogo, num
+    espaço que a reorganização podia realocar. Estes testes fixam o agrupamento e
+    a queda para o primeiro-livre quando não há âncora."""
+
+    GEAR_KEY = 509151
+    MAT_KEY = 143002
+
+    def build(self):
+        database = [
+            {"ItemKey": str(self.GEAR_KEY), "Name": "Equipamento", "Rarity": "COSMIC", "Type": "GEAR", "StatTypes": []},
+            {"ItemKey": "306191", "Name": "Outro equipamento", "Rarity": "BEYOND", "Type": "GEAR", "StatTypes": []},
+            {"ItemKey": str(self.MAT_KEY), "Name": "Material", "Rarity": "LEGENDARY", "Type": "MATERIAL", "StatTypes": []},
+        ]
+        player = minimal_player()
+        material = {"ItemKey": self.MAT_KEY, "UniqueId": 100, "PrevUniqueId": 0, "EnchantData": [], "EnchantCount": [0, 0, 0]}
+        gear = {"ItemKey": self.GEAR_KEY, "UniqueId": 200, "PrevUniqueId": 0, "EnchantData": [], "EnchantCount": [0, 0, 0]}
+        player["itemSaveDatas"] = [material, gear]
+        inventory = [storage_slot(i) for i in range(41)]
+        inventory[0]["ItemUniqueId"] = 100   # material ocupa o índice 0
+        inventory[20]["ItemUniqueId"] = 200  # equipamento ocupa o índice 20
+        player["inventorySaveDatas"] = inventory
+        return headless_editor({"account": {}, "player": player}, database)
+
+    def test_gear_copy_lands_next_to_gear_not_first_free(self):
+        editor = self.build()
+        index = editor.place_item_grouped(300, self.GEAR_KEY, "Inventario")
+        # primeiro-livre seria o índice 1 (o 0 está ocupado); agrupado gruda no
+        # equipamento do índice 20, escolhendo o vizinho livre mais próximo.
+        self.assertEqual(index, 19)
+        self.assertEqual(safe_int(editor.data["player"]["inventorySaveDatas"][19]["ItemUniqueId"]), 300)
+
+    def test_material_copy_lands_next_to_material(self):
+        editor = self.build()
+        index = editor.place_item_grouped(400, self.MAT_KEY, "Inventario")
+        self.assertEqual(index, 1)  # âncora no índice 0, vizinho livre mais próximo
+
+    def test_gear_falls_back_to_same_type_when_no_same_key(self):
+        editor = self.build()
+        # um equipamento de outra chave ainda deve grudar no equipamento existente
+        index = editor.place_item_grouped(500, 306191, "Inventario")
+        self.assertEqual(index, 19)
+
+    def test_unknown_kind_falls_back_to_first_free(self):
+        editor = self.build()
+        index = editor.place_item_grouped(600, 999999, "Inventario")
+        self.assertEqual(index, 1)  # sem mesma chave nem tipo conhecido: primeiro-livre
+
+    def test_never_writes_past_reachable_stash_range(self):
+        """Agrupar não pode furar a faixa que o jogo exibe (regressão da v342)."""
+        player = minimal_player()
+        gear = {"ItemKey": self.GEAR_KEY, "UniqueId": 200, "PrevUniqueId": 0, "EnchantData": [], "EnchantCount": [0, 0, 0]}
+        player["itemSaveDatas"] = [gear]
+        # âncora de equipamento numa página alta; espaços livres além da faixa visível
+        stash = [storage_slot(PAGE * 6, 200, stash=True)]
+        stash += [storage_slot(index, 0, stash=True) for index in range(PAGE * 6 + 1, PAGE * 8)]
+        player["stashSaveDatas"] = stash
+        editor = headless_editor({"account": {}, "player": player},
+                                 [{"ItemKey": str(self.GEAR_KEY), "Name": "G", "Rarity": "COSMIC", "Type": "GEAR", "StatTypes": []}])
+        index = editor.place_item_grouped(300, self.GEAR_KEY, "Armazem")
+        from legacy_editor import STASH_REACHABLE_SLOTS
+        self.assertNotEqual(index, -1)
+        self.assertLess(index, STASH_REACHABLE_SLOTS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2738,7 +2738,7 @@ class ProEditor:
             self.items.append(new_item)
             self.items_by_uid[new_uid] = new_item
             self.flag_item_created(new_item)
-            last_slot = self.place_item(new_uid, "Inventario")
+            last_slot = self.place_item_grouped(new_uid, safe_int(new_item.get("ItemKey")), "Inventario")
             created.append(new_item)
         self.selected_item = created[-1]
         self.mark_dirty(f"{len(created)} cópia(s) criada(s). Último espaço: Inventário #{last_slot}")
@@ -2843,6 +2843,58 @@ class ProEditor:
 
     def free_slot_count(self, target: str) -> int:
         return sum(self.slot_is_available(source, slot) for source, slot in self.slots_for_destination(target))
+
+    def place_item_grouped(self, uid: int, item_key: int, target: str) -> int:
+        """Coloca o item junto dos seus semelhantes, imitando a ordenação do jogo.
+
+        O jogo guarda inventário e armazém ordenados por ItemKey e reordena tudo
+        ao abrir o save. A colocação antiga (`place_item`) usava o primeiro espaço
+        livre, o que deixava, por exemplo, um equipamento duplicado no meio dos
+        materiais; no editor a cópia aparecia longe do original e, no jogo, num
+        espaço que a reorganização podia realocar. Aqui a cópia vai para o espaço
+        livre mais próximo de outro item do mesmo ItemKey (ou, na falta, do mesmo
+        tipo). Sem âncora, cai no mesmo primeiro-livre de antes. A escolha nunca
+        sai do conjunto de espaços válidos do destino, então as invariantes de
+        página e de faixa alcançável continuam valendo."""
+        candidatos = self.slots_for_destination(target)
+        livres = [(source, slot) for source, slot in candidatos if self.slot_is_available(source, slot)]
+        if not livres:
+            return -1
+        want_type = str(self.db_by_key.get(str(safe_int(item_key)), {}).get("Type") or "")
+
+        def ancoras(mesmo_key: bool) -> list[int]:
+            indices: list[int] = []
+            for source, slot in candidatos:
+                outro_uid = safe_int(slot.get("ItemUniqueId"))
+                if not outro_uid:
+                    continue
+                outro = self.items_by_uid.get(outro_uid)
+                if outro is None:
+                    continue
+                if mesmo_key:
+                    if safe_int(outro.get("ItemKey")) == safe_int(item_key):
+                        indices.append(safe_int(slot.get("Index")))
+                elif want_type and str(self.item_db(outro).get("Type") or "") == want_type:
+                    indices.append(safe_int(slot.get("Index")))
+            return indices
+
+        alvos = ancoras(True) or ancoras(False)
+        if alvos:
+            source, slot = min(
+                livres,
+                key=lambda sc: (
+                    min(abs(safe_int(sc[1].get("Index")) - a) for a in alvos),
+                    safe_int(sc[1].get("Index")),
+                ),
+            )
+        else:
+            source, slot = min(livres, key=lambda sc: safe_int(sc[1].get("Index")))
+        slot["ItemUniqueId"] = uid
+        if source == "stashSaveDatas":
+            slot["IsUnLock"] = True
+        else:
+            slot["IsUnlock"] = True
+        return safe_int(slot.get("Index"))
 
     def stash_page_is_unlocked(self, stash_page: int) -> bool:
         """Uma página só está disponível se algum de seus espaços estiver liberado.
@@ -4908,7 +4960,7 @@ class ProEditor:
             self.items.append(item)
             self.items_by_uid[safe_int(item.get("UniqueId"))] = item
             self.flag_item_created(item)
-            last_slot = self.place_item(safe_int(item.get("UniqueId")), target)
+            last_slot = self.place_item_grouped(safe_int(item.get("UniqueId")), safe_int(item.get("ItemKey")), target)
             created.append(item)
         self.selected_item = created[-1]
         self.mark_dirty(f"{len(created)} item(ns) criado(s) em {destination_label(target)}. Último espaço: #{last_slot}")

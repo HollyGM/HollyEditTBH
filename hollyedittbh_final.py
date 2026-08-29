@@ -158,6 +158,29 @@ class FinalProEditor(EnhancedProEditor):
             return
         super().open_create_item_dialog(initial_target, local_market_notice)
 
+    def warn_game_reorganizes_once(self) -> None:
+        """Explica, uma vez por sessão, por que itens criados/duplicados somem.
+
+        O jogo reordena e valida o inventário e o armazém ao carregar o save, e
+        pode realocar ou descartar itens que o editor criou. O editor não força o
+        jogo a aceitá-los: quem decide é a validação do jogo. Sem este aviso, o
+        item "sumia" no jogo sem explicação — a dúvida que motivou esta versão."""
+        if getattr(self, "_reorg_warning_shown", False):
+            return
+        self._reorg_warning_shown = True
+        messagebox.showwarning(
+            legacy.APP_NAME,
+            "Sobre itens criados ou duplicados:\n\n"
+            "O jogo reorganiza e valida o inventário e o armazém ao carregar o save. "
+            "Ele reordena os itens por conta própria e pode REALOCAR ou DESCARTAR "
+            "itens criados/duplicados por editor, sem aviso — por isso um item pode "
+            "existir no save e sumir depois que você abre o jogo.\n\n"
+            "O editor agora agrupa a colocação junto de itens do mesmo tipo para "
+            "reduzir isso, mas não há como garantir que o jogo aceite o item.\n\n"
+            "Feche o jogo antes de salvar e confira dentro do jogo depois de abrir. "
+            "Itens obtidos por métodos anormais podem gerar restrição do jogo ou do Mercado.",
+        )
+
     def create_item(
         self,
         item_key: int,
@@ -171,6 +194,7 @@ class FinalProEditor(EnhancedProEditor):
                 "O Modo Protegido não cria itens que não existiam no save carregado.",
             )
             return []
+        self.warn_game_reorganizes_once()
         return super().create_item(item_key, quantity, target, enchanted)
 
     def duplicate_item(self, item: dict, quantity: int = 1) -> list[dict]:
@@ -180,6 +204,7 @@ class FinalProEditor(EnhancedProEditor):
                 "O Modo Protegido não duplica itens. Use apenas os itens já existentes no save.",
             )
             return []
+        self.warn_game_reorganizes_once()
         return super().duplicate_item(item, quantity)
 
     def equip_item(self, hero: dict, slot_index: int, item: dict) -> bool:
