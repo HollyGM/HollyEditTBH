@@ -770,6 +770,7 @@ class ProEditor:
         style.configure("TLabel", background=THEME["panel"], foreground=THEME["text"], font=(UI_FONT, 9))
         style.configure("Top.TLabel", background=THEME["top"], foreground=THEME["muted"], font=(UI_FONT, 9))
         style.configure("Section.TLabel", background=THEME["panel"], foreground=THEME["muted"], font=(UI_FONT, 9, "bold"))
+        style.configure("Hint.TLabel", background=THEME["panel"], foreground=THEME["muted2"], font=(UI_FONT, 8))
         style.configure("TCheckbutton", background=THEME["panel"], foreground=THEME["text"], font=(UI_FONT, 9))
         style.map(
             "TCheckbutton",
@@ -1228,6 +1229,18 @@ class ProEditor:
         type_filter.pack(side=LEFT, padx=(4, 12))
         type_filter.bind("<<ComboboxSelected>>", lambda _e: self.refresh_tables())
         ttk.Checkbutton(options_row, text="Ocultar espaços vazios", variable=self.only_non_empty, command=self.refresh_tables).pack(side=LEFT)
+        if name == "stash":
+            ttk.Label(
+                filter_bar,
+                style="Hint.TLabel",
+                wraplength=780,
+                justify="left",
+                text=(
+                    "As posições mostram onde cada item está gravado no save. Ao carregar, o jogo "
+                    "reorganiza o armazém do próprio jeito, então a página aqui pode não corresponder "
+                    "à aba do jogo. Itens criados ou duplicados pelo editor podem ser descartados pelo jogo."
+                ),
+            ).pack(fill=X, anchor="w", pady=(6, 0))
         actions = ttk.Frame(bar, style="Panel.TFrame")
         actions.pack(fill=X, pady=(5, 0))
         actions_top = ttk.Frame(actions, style="Panel.TFrame")
