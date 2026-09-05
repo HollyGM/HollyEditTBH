@@ -153,6 +153,150 @@ class SaveLifecycleTests(PersistenceFixture):
 
 
 class StorageConsistencyTests(PersistenceFixture):
+    def test_move_failure_restores_original_locations_and_clean_state(self):
+        coin = self.coin()
+        self.editor.save_dump()
+        before = copy.deepcopy(self.editor.data)
+        saved = self.path.read_bytes()
+        self.editor.mark_dirty = Mock()
+        place = self.editor.place_item
+
+        def fail_after_placement(*args):
+            place(*args)
+            raise OSError("falha depois de ocupar o destino")
+
+        for failure in (Mock(return_value=-1), fail_after_placement):
+            with self.subTest(failure=failure), patch.object(self.editor, "place_item", side_effect=failure):
+                self.assertFalse(self.editor.move_item(coin, "Armazem 1"))
+                self.assertEqual(self.editor.data, before)
+                self.assertEqual(self.path.read_bytes(), saved)
+                self.assertFalse(self.editor.dirty)
+        self.editor.mark_dirty.assert_not_called()
+
+    def test_failed_equipment_swap_restores_both_items_and_list_identity(self):
+        old, new = self.editor.create_item(300101, 2)
+        hero = self.editor.data["player"]["heroSaveDatas"][0]
+        self.assertTrue(self.editor.equip_item(hero, 0, old))
+        equipped = hero["equippedItemIds"]
+        before = copy.deepcopy(self.editor.data)
+        self.editor.mark_dirty = Mock()
+        with patch.object(self.editor, "place_item", return_value=-1):
+            self.assertFalse(self.editor.equip_item(hero, 0, new))
+        self.assertEqual(self.editor.data, before)
+        self.assertIs(hero["equippedItemIds"], equipped)
+        self.editor.mark_dirty.assert_not_called()
+
+    def test_locked_source_does_not_count_as_room_for_replaced_equipment(self):
+        old, new = self.editor.create_item(300101, 2)
+        player = self.editor.data["player"]
+        hero = player["heroSaveDatas"][0]
+        self.assertTrue(self.editor.equip_item(hero, 0, old))
+        player["inventorySaveDatas"] = []
+        player["stashSaveDatas"] = [storage_slot(0, new["UniqueId"], stash=True, unlocked=False)]
+        before = copy.deepcopy(self.editor.data)
+        self.assertFalse(self.editor.equip_item(hero, 0, new))
+        self.assertEqual(self.editor.data, before)
+
+    def test_failed_unequip_preserves_equipment_and_storage(self):
+        gear = self.editor.create_item(300101)[0]
+        hero = self.editor.data["player"]["heroSaveDatas"][0]
+        self.assertTrue(self.editor.equip_item(hero, 0, gear))
+        before = copy.deepcopy(self.editor.data)
+        self.editor.mark_dirty = Mock()
+        place = self.editor.place_item
+
+        def fail_after_placement(*args):
+            place(*args)
+            return -1
+
+        with patch.object(self.editor, "place_item", side_effect=fail_after_placement):
+            self.assertFalse(self.editor.unequip_slot(hero, 0))
+        self.assertEqual(self.editor.data, before)
+        self.editor.mark_dirty.assert_not_called()
+
+    def test_bulk_unequip_failure_rolls_back_the_entire_transfer(self):
+        gears = self.editor.create_item(300101, 2)
+        hero = self.editor.data["player"]["heroSaveDatas"][0]
+        self.editor.selected_hero = hero
+        for index, gear in enumerate(gears):
+            self.editor.remove_uid_from_locations(gear["UniqueId"])
+            hero["equippedItemIds"][index] = gear["UniqueId"]
+        equipped = hero["equippedItemIds"]
+        before = copy.deepcopy(self.editor.data)
+        self.editor.mark_dirty = Mock()
+        place = self.editor.place_item
+        calls = 0
+
+        def fail_second(*args):
+            nonlocal calls
+            calls += 1
+            return place(*args) if calls == 1 else -1
+
+        with patch.object(self.editor, "place_item", side_effect=fail_second):
+            self.editor.unequip_all_selected_hero()
+        self.assertEqual(calls, 2)
+        self.assertEqual(self.editor.data, before)
+        self.assertIs(hero["equippedItemIds"], equipped)
+        self.editor.mark_dirty.assert_not_called()
+
+    def test_stale_item_and_hero_selections_cannot_move_current_items(self):
+        gear = self.editor.create_item(300101)[0]
+        hero = self.editor.data["player"]["heroSaveDatas"][0]
+        stale_hero = copy.deepcopy(hero)
+        stale_hero["equippedItemIds"][0] = gear["UniqueId"]
+        before = copy.deepcopy(self.editor.data)
+        self.assertFalse(self.editor.move_item(copy.deepcopy(gear), "Armazem 1"))
+        self.assertFalse(self.editor.equip_item(stale_hero, 0, gear))
+        self.assertFalse(self.editor.unequip_slot(stale_hero, 0))
+        self.editor.selected_hero = stale_hero
+        self.editor.unequip_all_selected_hero()
+        self.assertEqual(self.editor.data, before)
+        self.assertEqual(stale_hero["equippedItemIds"][0], gear["UniqueId"])
+
+    def test_move_within_inventory_rescues_an_item_from_a_locked_slot(self):
+        coin = self.coin()
+        slots = self.editor.data["player"]["inventorySaveDatas"]
+        slots[0]["IsUnlock"] = False
+        self.assertTrue(self.editor.move_item(coin, "Inventario"))
+        self.assertEqual(slots[0]["ItemUniqueId"], 0)
+        self.assertFalse(slots[0]["IsUnlock"])
+        self.assertEqual(slots[1]["ItemUniqueId"], coin["UniqueId"])
+
+    def test_queue_rejects_repeated_and_stale_rows_without_mutation(self):
+        self.coin()
+        row = self.editor.storage_item_rows()[0]
+        before = copy.deepcopy(self.editor.data)
+        for rows in ([row, row], [copy.deepcopy(row)], [dict(row, source_slot=copy.deepcopy(row["source_slot"]))]):
+            with self.subTest(rows=rows):
+                self.assertEqual(self.editor.apply_storage_queue(rows, 1), 0)
+                self.assertEqual(self.editor.data, before)
+
+    def test_queue_preserves_the_existing_unlock_field_spelling(self):
+        coin = self.coin()
+        target = {"Index": 0, "ItemUniqueId": 0, "IsUnlock": True, "FutureFlag": 8}
+        self.editor.data["player"]["stashSaveDatas"] = [target]
+        self.assertEqual(self.editor.apply_storage_queue(self.editor.storage_item_rows(), 1), 1)
+        self.assertEqual(target, {"Index": 0, "ItemUniqueId": coin["UniqueId"], "IsUnlock": True, "FutureFlag": 8})
+        self.assertEqual(len(self.editor.uid_location_labels(coin["UniqueId"])), 1)
+
+    def test_repair_and_encrypted_reload_preserve_empty_enchant_metadata(self):
+        gear = self.editor.create_item(300101)[0]
+        gear["EnchantData"][0].update(EnchantVersion="future-1.02", FutureMetadata={"seed": 73})
+        expected = copy.deepcopy(gear["EnchantData"][0])
+        self.editor.repair_save(show_message=False)
+        self.editor.save_dump()
+        self.error.assert_not_called()
+        loaded = final.VerifiedSaveFile.load(self.path)
+        self.assertEqual(loaded.player["itemSaveDatas"][0]["EnchantData"][0], expected)
+
+    def test_repair_keeps_extra_enchant_records_with_unknown_data(self):
+        gear = self.editor.create_item(300101)[0]
+        extra = dict(self.editor.empty_enchant(), FutureMetadata={"seed": 73})
+        gear["EnchantData"].append(extra)
+        self.editor.repair_save(show_message=False)
+        self.assertIs(gear["EnchantData"][-1], extra)
+        self.assertFalse(self.editor.validate_before_save())
+
     def test_partial_batch_placement_failure_rolls_back_data_and_session_flags(self):
         self.coin()
         before = copy.deepcopy(self.editor.data)
@@ -269,6 +413,51 @@ class StorageConsistencyTests(PersistenceFixture):
 
 
 class ReloadComparisonTests(PersistenceFixture):
+    def reload_editor(self):
+        self.editor.path_var = Mock()
+        self.editor.notebook = Mock()
+        self.editor.inventory_tab = object()
+        self.editor.load_dump(self.path)
+
+    def test_reopening_automatically_reports_missing_items_without_replacing_the_receipt(self):
+        coin = self.coin()
+        self.editor.save_dump()
+        previous = self.receipt()
+        external = final.VerifiedSaveFile.load(self.path)
+        external.player["itemSaveDatas"] = []
+        external.player["inventorySaveDatas"][0]["ItemUniqueId"] = 0
+        external.save(self.path)
+        before = self.path.read_bytes()
+        self.warning.reset_mock()
+        self.reload_editor()
+        self.assertEqual(self.editor.last_persistence_report["missing"], [str(coin["UniqueId"])])
+        self.warning.assert_called_once()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.receipt(), previous)
+        self.assertFalse(self.editor.dirty)
+        self.assertEqual(self.editor.items, [])
+
+    def test_reopening_the_same_file_does_not_display_a_loss_warning(self):
+        self.coin()
+        self.editor.save_dump()
+        self.warning.reset_mock()
+        self.reload_editor()
+        self.assertFalse(self.editor.last_persistence_report["file_changed"])
+        self.warning.assert_not_called()
+
+    def test_corrupt_receipt_does_not_block_loading_the_save(self):
+        coin = self.coin()
+        self.editor.save_dump()
+        target = audit.receipt_path(self.editor._receipt_directory(), self.path)
+        target.write_text("{broken", encoding="utf-8")
+        self.reload_editor()
+        self.assertIn(coin["UniqueId"], self.editor.items_by_uid)
+        self.assertIsNone(self.editor.last_persistence_report)
+        self.assertFalse(self.editor.dirty)
+        self.assertIn("não foi possível", self.editor.status_var.set.call_args.args[0])
+        self.assertEqual(target.read_text(encoding="utf-8"), "{broken")
+        self.error.assert_not_called()
+
     def test_same_file_does_not_claim_that_the_game_accepted_it(self):
         self.coin()
         self.editor.save_dump()

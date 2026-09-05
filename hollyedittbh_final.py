@@ -143,6 +143,28 @@ class FinalProEditor(EnhancedProEditor):
         # Fora da pasta do jogo e também fora do diretório temporário do bundle.
         return platform_support.user_data_dir(legacy.APP_NAME, legacy.APP_DIR, frozen=True) / "persistence"
 
+    def after_save_loaded(self) -> None:
+        """Compara antes de uma nova edição substituir o registro anterior."""
+        self.last_persistence_report = None
+        if self.loaded_kind != "es3" or not self.save_file.integrity_valid:
+            return
+        try:
+            previous = persistence_audit.read_receipt(self._receipt_directory(), self.path)
+            if previous is None:
+                return
+            current = persistence_audit.make_receipt(self.path, self.save_file, self.save_file._source_sha256)
+            report = persistence_audit.compare_receipts(previous, current)
+            self.last_persistence_report = report
+            if report["file_changed"]:
+                self.status_var.set(
+                    f"Save reaberto: {report['present']}/{report['expected']} itens anteriores presentes; "
+                    f"{len(report['missing'])} ausente(s), {len(report['changed'])} alterado(s)."
+                )
+                if report["missing"] or report["unlocated"]:
+                    messagebox.showwarning(legacy.APP_NAME, persistence_audit.describe_comparison(report))
+        except Exception as exc:
+            self.status_var.set(f"Save carregado; a comparação com a gravação anterior não foi possível: {exc}")
+
     def record_saved_persistence(self) -> str:
         try:
             record = persistence_audit.make_receipt(self.path, self.save_file, self.save_file._source_sha256)
@@ -150,7 +172,7 @@ class FinalProEditor(EnhancedProEditor):
         except Exception as exc:
             # A falha de um relatório auxiliar não desfaz um save já confirmado.
             return f"A gravação foi confirmada, mas o registro de conferência não pôde ser salvo: {exc}"
-        return "Após entrar no jogo, sair e fechar normalmente, use Mais opções → Conferir persistência após jogar."
+        return "Após entrar no jogo, sair e fechar normalmente, reabra este save ou use Mais opções → Conferir persistência após jogar."
 
     def check_saved_persistence(self) -> None:
         path = getattr(self, "path", None)

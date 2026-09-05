@@ -55,7 +55,7 @@ jobs:
           $item = Get-Item $exe
           $fileVersion = ([string]$item.VersionInfo.FileVersion).Trim()
           $productVersion = ([string]$item.VersionInfo.ProductVersion).Trim()
-          $allowedVersions = @('3.4.3', '3.4.3.0')
+          $allowedVersions = @('3.4.4', '3.4.4.0')
           Write-Host "Executável gerado: $($item.Length) bytes · FileVersion $fileVersion · ProductVersion $productVersion"
           if ($allowedVersions -notcontains $fileVersion) { throw "FileVersion inesperada: $fileVersion" }
           if ($allowedVersions -notcontains $productVersion) { throw "ProductVersion inesperada: $productVersion" }
@@ -90,7 +90,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.3-windows
+          name: HollyEditTBH-v3.4.4-windows
           path: |
             dist/HollyEditTBH.exe
             dist/SHA256SUMS.txt
@@ -136,7 +136,7 @@ jobs:
       - name: Upload Linux package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.3-linux
+          name: HollyEditTBH-v3.4.4-linux
           path: |
             dist/HollyEditTBH
             dist/SHA256SUMS.txt
@@ -183,7 +183,7 @@ jobs:
       - name: Upload macOS package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.3-macos
+          name: HollyEditTBH-v3.4.4-macos
           path: |
             dist/HollyEditTBH-macos.zip
             dist/SHA256SUMS.txt

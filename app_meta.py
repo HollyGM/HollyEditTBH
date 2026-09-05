@@ -1,7 +1,7 @@
 """Single source of truth for HollyEditTBH application metadata."""
 
 APP_NAME = "HollyEditTBH"
-APP_VERSION = "3.4.3"
+APP_VERSION = "3.4.4"
 __version__ = APP_VERSION
 
 #: AppID do TBH: Task Bar Hero publicado na Steam. Serve tanto à URL de busca do

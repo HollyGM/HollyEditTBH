@@ -18,6 +18,7 @@ import unicodedata
 import urllib.request
 import webbrowser
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, StringVar, Tk, filedialog, messagebox
 from tkinter import font as tkfont
@@ -1127,7 +1128,7 @@ class ProEditor:
         if not enabled:
             if not messagebox.askyesno(
                 APP_NAME,
-                "Desativar o Modo Protegido remove limites de lote e permite salvar enquanto o jogo estiver aberto.\n\n"
+                "Desativar o Modo Protegido remove limites de lote. A gravação continua exigindo o jogo fechado.\n\n"
                 "Isso não evita restrições do jogo ou da Steam. Deseja continuar?",
             ):
                 self.protected_mode_var.set(True)
@@ -1441,19 +1442,32 @@ class ProEditor:
         self.refresh_all()
 
     def unequip_all_selected_hero(self) -> None:
-        if not self.selected_hero:
+        if not self.data or not self.selected_hero:
+            return
+        if not any(self.selected_hero is hero for hero in self.data["player"].get("heroSaveDatas", [])):
+            messagebox.showerror(APP_NAME, "O herói selecionado não pertence ao save aberto. Atualize a seleção.")
+            return
+        equipped = self.selected_hero.get("equippedItemIds")
+        if not isinstance(equipped, list) or len(equipped) != 10:
+            messagebox.showerror(APP_NAME, "Os espaços do herói são inválidos. Use Validar save antes de desequipar.")
             return
         if not messagebox.askyesno(APP_NAME, "Desequipar todos os itens deste herói e mover para o Inventário?"):
             return
-        ids = list(self.selected_hero.get("equippedItemIds", []))
+        ids = list(equipped)
         needed = sum(1 for uid in ids if safe_int(uid))
         if self.free_slot_count("Inventario") < needed:
             messagebox.showerror(APP_NAME, "Não há espaço suficiente no Inventário.")
             return
-        self.selected_hero["equippedItemIds"] = [0] * 10
-        for uid in ids:
-            if safe_int(uid) in self.items_by_uid:
-                self.place_item(safe_int(uid), "Inventario")
+        try:
+            with self._location_transaction():
+                equipped[:] = [0] * 10
+                for uid in ids:
+                    uid = safe_int(uid)
+                    if uid and (uid not in self.items_by_uid or self.place_item(uid, "Inventario") < 0):
+                        raise ValueError("não foi possível guardar todos os itens no Inventário")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Os equipamentos foram mantidos nos locais anteriores.\n{exc}")
+            return
         self.mark_dirty("Todos os itens do herói foram desequipados.")
         self.refresh_all()
 
@@ -1712,6 +1726,10 @@ class ProEditor:
             f"Save pronto: {len(self.items)} itens | {errors} erro(s) | {warnings} aviso(s) | "
             f"Modo protegido {'ativo' if self.protected_mode_enabled() else 'inativo'} | Agora selecione um item no Inventário."
         )
+        self.after_save_loaded()
+
+    def after_save_loaded(self) -> None:
+        """Ponto de integração da conferência de persistência da camada final."""
  
     def start_db_download(self) -> None:
         def worker() -> None:
@@ -2491,12 +2509,12 @@ class ProEditor:
                             "StatModKey": STAT_TYPE_TO_MOD.get(values["StatType"], 0),
                             "RecipeType": expected_recipe,
                             "ModType": 0,
-                            "EnchantVersion": None,
+                            "EnchantVersion": enchant.get("EnchantVersion"),
                         }
                     )
                 else:
                     values = self.empty_enchant()
-                enchant.clear()
+                    values["EnchantVersion"] = enchant.get("EnchantVersion")
                 enchant.update(values)
                 self.sync_enchant_metadata(self.selected_item)
                 self.flag_item_modified(self.selected_item)
@@ -2561,7 +2579,7 @@ class ProEditor:
         expected_count = self.expected_enchant_slot_count(item)
         if expected_count is not None and len(enchants) > expected_count:
             extras = enchants[expected_count:]
-            if all(isinstance(enchant, dict) and not self.enchant_is_filled(enchant) for enchant in extras):
+            if all(enchant == self.empty_enchant() for enchant in extras):
                 del enchants[expected_count:]
                 changed = True
         while expected_count is not None and len(enchants) < expected_count:
@@ -2584,9 +2602,12 @@ class ProEditor:
         recipe_types = ENCHANT_RECIPE_TYPES.get(len(item["EnchantData"]), ())
         for index, enchant in enumerate(item["EnchantData"]):
             if not self.enchant_is_filled(enchant):
-                if enchant != self.empty_enchant():
-                    item["EnchantData"][index] = self.empty_enchant()
-                    changed = True
+                # Metadados e versões desconhecidos não são lixo: podem ser
+                # necessários ao leitor do jogo, mesmo num espaço sem atributo.
+                for key, value in EMPTY_ENCHANT.items():
+                    if key != "EnchantVersion" and enchant.get(key) != value:
+                        enchant[key] = value
+                        changed = True
                 continue
             if index >= 6:
                 continue
@@ -3501,6 +3522,8 @@ class ProEditor:
         return candidates[: max(0, min(limit, capacity))]
 
     def apply_storage_queue(self, rows: list[dict], stash_page: int) -> int:
+        if not self.data:
+            return 0
         target_slots = [
             slot
             for source, slot in self.slots_for_destination(f"Armazem {stash_page}")
@@ -3508,18 +3531,24 @@ class ProEditor:
         ]
         if len(target_slots) < len(rows):
             return 0
+        live_slots = {id(slot) for source in (
+            "inventorySaveDatas", "stashSaveDatas", "remakeTradingStashSaveDatas"
+        ) for slot in self.data["player"].get(source, [])}
+        seen_uids: set[int] = set()
         for row in rows:
             item = row.get("item")
             source_slot = row.get("source_slot")
             if not isinstance(item, dict) or not isinstance(source_slot, dict):
                 return 0
-            if safe_int(source_slot.get("ItemUniqueId")) != safe_int(item.get("UniqueId")):
+            uid = safe_int(item.get("UniqueId"))
+            if (uid <= 0 or uid in seen_uids or self.items_by_uid.get(uid) is not item
+                    or id(source_slot) not in live_slots or safe_int(source_slot.get("ItemUniqueId")) != uid):
                 return 0
+            seen_uids.add(uid)
         for row, destination in zip(rows, target_slots):
             uid = safe_int(row["item"].get("UniqueId"))
             row["source_slot"]["ItemUniqueId"] = 0
             destination["ItemUniqueId"] = uid
-            destination["IsUnLock"] = True
         return len(rows)
 
     def campaign_access_changes(self, apply: bool = False) -> list[str]:
@@ -4254,6 +4283,31 @@ class ProEditor:
                     changed += 1
         return changed
 
+    @contextmanager
+    def _location_transaction(self):
+        """Restaura referências existentes quando uma transferência não termina."""
+        player = self.data["player"]
+        slots = [(slot, dict(slot)) for source in (
+            "inventorySaveDatas", "stashSaveDatas", "remakeTradingStashSaveDatas"
+        ) for slot in player.get(source, [])]
+        heroes = [(hero, "equippedItemIds" in hero, hero.get("equippedItemIds"),
+                   copy.deepcopy(hero.get("equippedItemIds"))) for hero in player.get("heroSaveDatas", [])]
+        try:
+            yield
+        except Exception:
+            for slot, original in slots:
+                slot.clear()
+                slot.update(original)
+            for hero, existed, original_ids, values in heroes:
+                if not existed:
+                    hero.pop("equippedItemIds", None)
+                elif isinstance(original_ids, list):
+                    original_ids[:] = values
+                    hero["equippedItemIds"] = original_ids
+                else:
+                    hero["equippedItemIds"] = original_ids
+            raise
+
     def open_equip_dialog(self, hero: dict | None, slot_index: int) -> None:
         if not hero or not self.data:
             return
@@ -4362,30 +4416,43 @@ class ProEditor:
         search.focus_set()
 
     def equip_item(self, hero: dict, slot_index: int, item: dict) -> bool:
+        if not self.data or not 0 <= slot_index < 10:
+            return False
+        if not any(hero is current for current in self.data["player"].get("heroSaveDatas", [])):
+            messagebox.showerror(APP_NAME, "O herói selecionado não pertence ao save aberto. Atualize a seleção.")
+            return False
+        new_uid = safe_int(item.get("UniqueId"))
+        if new_uid <= 0 or self.items_by_uid.get(new_uid) is not item:
+            messagebox.showerror(APP_NAME, "O item selecionado não pertence ao save aberto. Atualize a seleção.")
+            return False
         if not self.item_compatible_with_slot(item, hero, slot_index):
             messagebox.showerror(APP_NAME, "Esse item não é compatível com o espaço selecionado.")
             return False
-        ids = hero.setdefault("equippedItemIds", [])
-        while len(ids) < 10:
-            ids.append(0)
-        new_uid = safe_int(item.get("UniqueId"))
+        ids = hero.get("equippedItemIds")
+        if not isinstance(ids, list) or len(ids) != 10:
+            messagebox.showerror(APP_NAME, "Os espaços do herói são inválidos. Use Validar save antes de equipar.")
+            return False
         old_uid = safe_int(ids[slot_index])
         if old_uid == new_uid:
             return True
-        selected_in_inventory = any(
+        freed_storage = sum(
             safe_int(slot.get("ItemUniqueId")) == new_uid
-            for slot in self.data["player"].get("inventorySaveDatas", [])
+            and self.slot_is_unlocked(source, slot)
+            for source, slot in self.slots_for_destination("Automatico")
         )
-        if old_uid and self.free_slot_count("Automatico") + int(selected_in_inventory) < 1:
+        if old_uid and self.free_slot_count("Automatico") + freed_storage < 1:
             messagebox.showerror(APP_NAME, "Não há espaço no Inventário nem no Armazém para guardar o item substituído.")
             return False
-        self.remove_uid_from_locations(new_uid, include_heroes=True)
-        ids = hero.setdefault("equippedItemIds", [0] * 10)
-        while len(ids) < 10:
-            ids.append(0)
-        ids[slot_index] = new_uid
-        if old_uid and old_uid in self.items_by_uid and not self.uid_location_labels(old_uid):
-            self.place_item(old_uid, "Automatico")
+        try:
+            with self._location_transaction():
+                self.remove_uid_from_locations(new_uid, include_heroes=True)
+                ids[slot_index] = new_uid
+                if old_uid and not self.uid_location_labels(old_uid):
+                    if old_uid not in self.items_by_uid or self.place_item(old_uid, "Automatico") < 0:
+                        raise ValueError("não foi possível guardar o equipamento substituído")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"A troca não foi aplicada. Os itens continuam nos locais anteriores.\n{exc}")
+            return False
         self.selected_hero = hero
         self.selected_item = item
         self.mark_dirty(f"{self.item_name(item)} equipado em {SLOT_NAMES.get(slot_index, 'SLOT')}.")
@@ -4393,17 +4460,29 @@ class ProEditor:
         return True
 
     def unequip_slot(self, hero: dict, slot_index: int) -> bool:
-        ids = hero.setdefault("equippedItemIds", [])
-        while len(ids) < 10:
-            ids.append(0)
+        if not self.data or not 0 <= slot_index < 10:
+            return False
+        if not any(hero is current for current in self.data["player"].get("heroSaveDatas", [])):
+            messagebox.showerror(APP_NAME, "O herói selecionado não pertence ao save aberto. Atualize a seleção.")
+            return False
+        ids = hero.get("equippedItemIds")
+        if not isinstance(ids, list) or len(ids) != 10:
+            messagebox.showerror(APP_NAME, "Os espaços do herói são inválidos. Use Validar save antes de desequipar.")
+            return False
         uid = safe_int(ids[slot_index])
         if not uid:
             return True
         if self.free_slot_count("Automatico") < 1:
             messagebox.showerror(APP_NAME, "Não há espaço no Inventário nem no Armazém.")
             return False
-        ids[slot_index] = 0
-        self.place_item(uid, "Automatico")
+        try:
+            with self._location_transaction():
+                if uid not in self.items_by_uid or self.place_item(uid, "Automatico") < 0:
+                    raise ValueError("não foi possível guardar o equipamento")
+                ids[slot_index] = 0
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"O equipamento foi mantido no herói.\n{exc}")
+            return False
         self.mark_dirty(f"Item de {SLOT_NAMES.get(slot_index, 'SLOT')} desequipado.")
         self.refresh_all()
         return True
@@ -4469,6 +4548,9 @@ class ProEditor:
 
     def move_item(self, item: dict, target: str) -> bool:
         uid = safe_int(item.get("UniqueId"))
+        if not self.data or uid <= 0 or self.items_by_uid.get(uid) is not item:
+            messagebox.showerror(APP_NAME, "O item selecionado não pertence ao save aberto. Atualize a seleção.")
+            return False
         current_slots = [
             (source, slot)
             for source in ("inventorySaveDatas", "stashSaveDatas", "remakeTradingStashSaveDatas")
@@ -4476,15 +4558,21 @@ class ProEditor:
             if safe_int(slot.get("ItemUniqueId")) == uid
         ]
         target_slots = self.slots_for_destination(target)
-        if any(any(source == target_source and slot is target_slot for target_source, target_slot in target_slots) for source, slot in current_slots):
+        if any(self.slot_is_unlocked(source, slot) and any(source == target_source and slot is target_slot
+               for target_source, target_slot in target_slots) for source, slot in current_slots):
             self.status_var.set(f"{self.item_name(item)} já está em {destination_label(target)}.")
             return True
         if self.free_slot_count(target) < 1:
             messagebox.showerror(APP_NAME, f"Não há espaço livre em {destination_label(target)}.")
             return False
-        self.remove_uid_from_locations(uid, include_heroes=True)
-        slot = self.place_item(uid, target)
-        if slot < 0:
+        try:
+            with self._location_transaction():
+                self.remove_uid_from_locations(uid, include_heroes=True)
+                slot = self.place_item(uid, target)
+                if slot < 0:
+                    raise ValueError("não foi possível reservar o espaço de destino")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"O item foi mantido no local anterior.\n{exc}")
             return False
         self.mark_dirty(f"{self.item_name(item)} movido para {destination_label(target)} · espaço {slot}.")
         self.refresh_all()

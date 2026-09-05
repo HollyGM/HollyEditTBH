@@ -2,7 +2,7 @@
 
 Editor independente e não oficial de saves do **TBH: Task Bar Hero**, para **Windows, Linux e macOS**.
 
-Projeto: <https://github.com/HollyGM/HollyEditTBH> · Versão atual: **3.4.3**
+Projeto: <https://github.com/HollyGM/HollyEditTBH> · Versão atual: **3.4.4**
 
 O editor abre o `SaveFile_Live.es3` do jogo, mostra heróis, itens e progresso em português, e grava de volta com backup e validação de integridade. O **Modo Protegido** vem ligado por padrão e bloqueia as operações de maior risco. Leia [Limites](#limites) antes de usar: nenhum editor de save oferece garantia contra sanções do jogo ou da Steam.
 
@@ -41,13 +41,17 @@ Feche o jogo antes de salvar. A checagem de processo usa `tasklist` no Windows e
 2. Abra o **SaveFile_Live.es3** usado pela instalação/conta desejada. Salvar uma cópia JSON não altera o jogo.
 3. Faça as alterações e use **Salvar alterações**. O editor valida os locais dos itens, cria backup, grava e relê o arquivo criptografado. Dados, integridade e conteúdo precisam corresponder à edição antes de informar sucesso.
 4. Entre no jogo, confira os itens, saia e feche normalmente para que o jogo grave seu estado.
-5. No editor, use **Mais opções → Conferir persistência após jogar**. A conferência também funciona depois de reiniciar o editor, abrindo o mesmo `.es3`.
+5. Reabra o mesmo `.es3` no editor. A comparação com a última gravação é automática e avisa quando faltam itens ou há itens sem local. O comando **Mais opções → Conferir persistência após jogar** permite repetir a conferência sem descartar edições pendentes.
 
 A conferência compara a última gravação confirmada do editor com o arquivo atual no disco. Mostra IDs ausentes, dados alterados, mudanças de localização, itens novos e itens sem local. Reordenar os registros não conta como perda. Se os bytes continuam iguais, informa que ainda não há evidência de um novo salvamento pelo jogo. A comparação não altera o save nem as edições pendentes em memória.
 
 O registro de conferência fica nos dados locais do editor, separado da pasta do jogo. Não modifica o formato ES3, não é um backup e não é enviado à Steam. Cada caminho tem seu registro; uma mudança de conta impede comparar identidades diferentes. Falha ao gravar esse registro auxiliar é informada separadamente de uma gravação do save já confirmada.
 
 Itens sem local, em espaços bloqueados ou fora das sete páginas conhecidas do armazém impedem salvar até o reparo. O reparo realoca quando há espaço disponível, preservando os itens e as permissões dos espaços; não inventa índices novos. Se não houver espaço ou restarem índices inválidos/duplicados, a gravação permanece bloqueada. Criar e duplicar em lote também exige um local válido para cada item e desfaz o lote inteiro se alguma colocação falhar.
+
+Mover, equipar e desequipar também restauram as referências originais se a transferência falhar, inclusive ao desequipar todos os itens de um herói. A troca de equipamento aproveita o espaço liberado pelo item escolhido no armazém. Seleções de outro save e filas repetidas ou desatualizadas são recusadas antes da alteração.
+
+O reparo e a edição de encantamentos preservam campos desconhecidos e a versão original do registro. Espaços extras com metadados não são apagados silenciosamente: uma estrutura incompatível continua apontada pela validação.
 
 **Limite da validação:** releitura pelo editor não comprova aceitação pelo jogo. Os testes de persistência usam saves sintéticos e simulações de alterações externas, sem executar o login no Taskbar Hero. A comparação não atribui diferenças automaticamente à nuvem ou ao servidor: consumo, venda e reciclagem normais também podem remover itens. Agrupar posições é uma conveniência visual e não comprova aceitação. Uma incompatibilidade com a versão instalada precisa ser investigada com os saves reais antes e depois de jogar; o programa não recria automaticamente itens ausentes.
 
@@ -208,7 +212,7 @@ python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_mar
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **239 testes automatizados**:
+A suíte contém **253 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
@@ -221,7 +225,7 @@ A suíte contém **239 testes automatizados**:
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
 | `test_v341_ux_and_portability.py` | 51 | interface, português, portabilidade e descoberta do save |
 | `test_v342_stash_geometry.py` | 18 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |
-| `test_item_persistence.py` | 32 | criação, duplicação, localização, gravação/recarga, conflitos, preservação de metadados e conferência posterior |
+| `test_item_persistence.py` | 46 | criação, duplicação, rollback de transferências, seleções antigas, gravação/recarga, conflitos, metadados e comparação automática ao abrir |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 
@@ -241,7 +245,7 @@ O CI também executa, nos três sistemas:
 - smoke test de 3 segundos da ponte `tbh_save_editor.py` (Windows);
 - instalação da toolchain fixada em `requirements-build.txt`;
 - build pelo PyInstaller;
-- conferência exata de `FileVersion` e `ProductVersion` 3.4.3/3.4.3.0 (Windows);
+- conferência exata de `FileVersion` e `ProductVersion` 3.4.4/3.4.4.0 (Windows);
 - inicialização real do executável por 5 a 8 segundos em cada plataforma;
 - geração de `SHA256SUMS.txt`;
 - validação de que `dist` contém somente `HollyEditTBH.exe` e `SHA256SUMS.txt` (Windows);
