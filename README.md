@@ -2,7 +2,7 @@
 
 Editor independente e não oficial de saves do **TBH: Task Bar Hero**, para **Windows, Linux e macOS**.
 
-Projeto: <https://github.com/HollyGM/HollyEditTBH> · Versão atual: **3.4.0**
+Projeto: <https://github.com/HollyGM/HollyEditTBH> · Versão atual: **3.4.3**
 
 O editor abre o `SaveFile_Live.es3` do jogo, mostra heróis, itens e progresso em português, e grava de volta com backup e validação de integridade. O **Modo Protegido** vem ligado por padrão e bloqueia as operações de maior risco. Leia [Limites](#limites) antes de usar: nenhum editor de save oferece garantia contra sanções do jogo ou da Steam.
 
@@ -31,9 +31,25 @@ O editor localiza sozinho a pasta do save de cada sistema e, se encontrar o `Sav
 
 No Linux, a procura não se limita às pastas dentro do `$HOME`: as bibliotecas Steam declaradas em `libraryfolders.vdf` também entram, de modo que uma biblioteca em disco externo — configuração comum de quem tem SSD de sistema pequeno — é encontrada. Se o save estiver em outro lugar, use **Abrir save** e aponte o `.es3` manualmente.
 
-Passar um caminho na linha de comando ou deixar um `player_dump.json` ao lado do programa continua tendo precedência sobre a abertura automática.
+Um caminho explícito na linha de comando tem precedência. Sem argumento, o editor prefere o `SaveFile_Live.es3`; um `player_dump.json` ao lado do programa só é aberto quando não há save do jogo. Um caminho explícito inexistente gera uma mensagem, sem abrir outro arquivo silenciosamente. A descoberta também prefere pastas com um save a prefixos vazios de outras instalações.
 
-Feche o jogo antes de salvar. No Windows, o Modo Protegido detecta o Taskbar Hero em execução e recusa gravar; no Linux e no macOS essa detecção não existe, então fechar o jogo antes de salvar é responsabilidade sua.
+Feche o jogo antes de salvar. A checagem de processo usa `tasklist` no Windows e `ps` no Linux/macOS, inclusive os nomes conhecidos sob Wine/Proton. Falha de consulta bloqueia a gravação. Essa proteção e a detecção de alteração externa do arquivo continuam ativas ao desativar o Modo Protegido para criar itens.
+
+## Persistência ao entrar no jogo
+
+1. Feche o jogo normalmente e aguarde a sincronização da Steam terminar.
+2. Abra o **SaveFile_Live.es3** usado pela instalação/conta desejada. Salvar uma cópia JSON não altera o jogo.
+3. Faça as alterações e use **Salvar alterações**. O editor valida os locais dos itens, cria backup, grava e relê o arquivo criptografado. Dados, integridade e conteúdo precisam corresponder à edição antes de informar sucesso.
+4. Entre no jogo, confira os itens, saia e feche normalmente para que o jogo grave seu estado.
+5. No editor, use **Mais opções → Conferir persistência após jogar**. A conferência também funciona depois de reiniciar o editor, abrindo o mesmo `.es3`.
+
+A conferência compara a última gravação confirmada do editor com o arquivo atual no disco. Mostra IDs ausentes, dados alterados, mudanças de localização, itens novos e itens sem local. Reordenar os registros não conta como perda. Se os bytes continuam iguais, informa que ainda não há evidência de um novo salvamento pelo jogo. A comparação não altera o save nem as edições pendentes em memória.
+
+O registro de conferência fica nos dados locais do editor, separado da pasta do jogo. Não modifica o formato ES3, não é um backup e não é enviado à Steam. Cada caminho tem seu registro; uma mudança de conta impede comparar identidades diferentes. Falha ao gravar esse registro auxiliar é informada separadamente de uma gravação do save já confirmada.
+
+Itens sem local, em espaços bloqueados ou fora das sete páginas conhecidas do armazém impedem salvar até o reparo. O reparo realoca quando há espaço disponível, preservando os itens e as permissões dos espaços; não inventa índices novos. Se não houver espaço ou restarem índices inválidos/duplicados, a gravação permanece bloqueada. Criar e duplicar em lote também exige um local válido para cada item e desfaz o lote inteiro se alguma colocação falhar.
+
+**Limite da validação:** releitura pelo editor não comprova aceitação pelo jogo. Os testes de persistência usam saves sintéticos e simulações de alterações externas, sem executar o login no Taskbar Hero. A comparação não atribui diferenças automaticamente à nuvem ou ao servidor: consumo, venda e reciclagem normais também podem remover itens. Agrupar posições é uma conveniência visual e não comprova aceitação. Uma incompatibilidade com a versão instalada precisa ser investigada com os saves reais antes e depois de jogar; o programa não recria automaticamente itens ausentes.
 
 ### Atalhos
 
@@ -111,13 +127,13 @@ O Modo Protegido permanece ativo por padrão e mantém todas as barreiras da 3.3
 - não duplica itens;
 - não equipa itens criados durante a sessão;
 - itens modificados/criados continuam excluídos da inteligência de Mercado;
-- bloqueia salvamento enquanto o Taskbar Hero estiver aberto;
-- bloqueia salvamento quando o conteúdo do arquivo mudou no disco depois de ser carregado;
-- bloqueia também se a assinatura inicial do save não puder ser obtida;
+- a gravação permanece bloqueada enquanto o Taskbar Hero estiver aberto, inclusive fora do Modo Protegido;
+- a gravação permanece bloqueada quando o conteúdo do arquivo mudou no disco depois de ser carregado;
+- a gravação também é bloqueada se a assinatura inicial do save não puder ser obtida;
 - falha, timeout ou retorno inválido do `tasklist` é tratado conservadoramente como estado inseguro, em vez de presumir que o jogo está fechado;
 - a detecção executa `%SystemRoot%\System32\tasklist.exe` por caminho absoluto, evitando resolução pelo diretório da aplicação ou pelo `PATH`, e usa decodificação tolerante sem afetar a comparação ASCII do processo.
 
-**Detecção do jogo aberto é exclusiva do Windows.** Fora dele não existe equivalente implementado e a checagem reporta "jogo fechado", de modo que o bloqueio por jogo em execução não protege no Linux nem no macOS. Todas as demais barreiras do Modo Protegido — inclusive o bloqueio por mudança externa do arquivo, que é a proteção mais importante contra perda de progresso — valem nas três plataformas.
+**Detecção disponível nas três plataformas.** No Linux/macOS são reconhecidos os nomes conhecidos do executável e dos processos Wine; executáveis renomeados ou processos ocultos por restrições do sistema podem escapar da detecção. A consulta é repetida após os diálogos de validação, imediatamente antes de iniciar a gravação. Ela não bloqueia a abertura futura do jogo nem a sincronização posterior da Steam.
 
 A criação e duplicação local continuam disponíveis somente após desativação consciente do Modo Protegido. Isso não transforma a operação em segura ou aceita pelo jogo.
 
@@ -178,7 +194,7 @@ A entrada suportada é `hollyedittbh_final.py`.
 
 `hollyedittbh_next.py` e `legacy_editor.py` são camadas internas, não aplicações: executá-las diretamente é recusado com uma mensagem apontando a entrada suportada. `tbh_save_editor.py` permanece apenas como ponte de compatibilidade: importações resolvem para o núcleo legado e execução direta redireciona para `hollyedittbh_final.py`. O `HollyEditTBH.spec` continua empacotando a entrada final; não existem duas aplicações independentes.
 
-Módulos de apoio sem dependência de `tkinter`, para poderem ser testados sem interface: `intelligence_engine.py` (pontuação e alocação), `market_policy.py` (política única de Mercado), `commemorative_coins.py` (registro e plano das moedas), `safe_persistence.py` (gravação transacional), `platform_support.py` (caminhos, abertura de pastas e fonte por sistema).
+Módulos de apoio sem dependência de `tkinter`, para poderem ser testados sem interface: `intelligence_engine.py` (pontuação e alocação), `market_policy.py` (política única de Mercado), `commemorative_coins.py` (registro e plano das moedas), `safe_persistence.py` (gravação transacional), `persistence_audit.py` (conferência dos itens após reabrir o save), `platform_support.py` (caminhos, processos, abertura de pastas e fonte por sistema).
 
 `app_meta.py` concentra os metadados de identidade — nome, versão e o AppID Steam do jogo. O AppID chegou a existir duas vezes com valores diferentes, o que quebrou a descoberta do save no Linux; ele agora tem uma definição só, e um teste falha se um módulo voltar a redefini-lo.
 
@@ -187,24 +203,25 @@ Módulos de apoio sem dependência de `tkinter`, para poderem ser testados sem i
 Executar a mesma suíte usada pelo CI:
 
 ```bash
-python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py
+python3.12 -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py test_item_persistence.py
 ```
 
 No Linux sem sessão gráfica, prefixe com `xvfb-run -a`: cinco testes exercitam widgets Tk de verdade e são pulados quando não há display.
 
-A suíte contém **200 testes automatizados**:
+A suíte contém **239 testes automatizados**:
 
 | Módulo | Testes | Cobre |
 | --- | ---: | --- |
-| `test_hollyedittbh.py` | 30 | núcleo do editor, filtros, criptografia e diálogo de abertura |
+| `test_hollyedittbh.py` | 35 | núcleo do editor, filtros, criptografia e diálogo de abertura |
 | `test_intelligence_v33.py` | 13 | pontuação contínua, alocação exata e prefixos de espaço |
 | `test_market_ranking_v33.py` | 2 | ordenação da fila de Mercado |
 | `test_hero_profiles_v33.py` | 7 | integridade dos perfis de herói |
 | `test_final_audit_v331.py` | 14 | auditoria da 3.3.1 |
 | `test_hardening_v332.py` | 19 | persistência transacional, conflito, rollback e gates de build |
 | `test_v340_coins_and_policy.py` | 48 | moedas comemorativas, política única de Mercado, gate do Cubo, espaço do amuleto |
-| `test_v341_ux_and_portability.py` | 49 | interface, português, portabilidade e descoberta do save |
+| `test_v341_ux_and_portability.py` | 51 | interface, português, portabilidade e descoberta do save |
 | `test_v342_stash_geometry.py` | 18 | tamanho e número das abas do armazém, conferidos contra a tela do jogo, e itens fora delas |
+| `test_item_persistence.py` | 32 | criação, duplicação, localização, gravação/recarga, conflitos, preservação de metadados e conferência posterior |
 
 Alguns destaques do que a suíte protege, por serem defeitos que já ocorreram neste projeto:
 
@@ -224,7 +241,7 @@ O CI também executa, nos três sistemas:
 - smoke test de 3 segundos da ponte `tbh_save_editor.py` (Windows);
 - instalação da toolchain fixada em `requirements-build.txt`;
 - build pelo PyInstaller;
-- conferência exata de `FileVersion` e `ProductVersion` 3.4.0/3.4.0.0 (Windows);
+- conferência exata de `FileVersion` e `ProductVersion` 3.4.3/3.4.3.0 (Windows);
 - inicialização real do executável por 5 a 8 segundos em cada plataforma;
 - geração de `SHA256SUMS.txt`;
 - validação de que `dist` contém somente `HollyEditTBH.exe` e `SHA256SUMS.txt` (Windows);

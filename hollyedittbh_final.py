@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import ntpath
 import os
@@ -11,8 +12,10 @@ from pathlib import Path
 from tkinter import Tk, messagebox
 
 import tbh_save_editor as legacy
+import platform_support
+import persistence_audit
 from hollyedittbh_next import EnhancedProEditor
-from safe_persistence import normalize_path, write_save_transactionally
+from safe_persistence import SaveConflictError, normalize_path, write_save_transactionally
 from save_layer import ES3_PASSWORD, SaveFile as BaseSaveFile, es3_decrypt
 
 
@@ -31,6 +34,7 @@ class VerifiedSaveFile(BaseSaveFile):
 
     def save(self, path, backup=True):
         previous_integrity = self.integrity_valid
+        previous_es3 = copy.deepcopy(self._es3)
         self.last_backup_path = None
         try:
             blob = self.to_es3_bytes()
@@ -46,11 +50,20 @@ class VerifiedSaveFile(BaseSaveFile):
                 expected_sha256=expected_sha256,
             )
             self.last_backup_path = str(backup_path) if backup_path is not None else None
+            installed = type(self).load(saved_path, self.password)
+            if (installed._source_sha256 != blob_sha256 or not installed.integrity_valid
+                    or installed.account != self.account or installed.player != self.player
+                    or installed._es3 != self._es3):
+                raise SaveConflictError(
+                    "O arquivo relido não corresponde à edição. Reabra o save antes de continuar. "
+                    f"Backup: {self.last_backup_path or 'não disponível'}."
+                )
             self._source_path = target_identity
             self._source_sha256 = blob_sha256
             return saved_path
         except Exception:
             self.integrity_valid = previous_integrity
+            self._es3 = previous_es3
             raise
 
 
@@ -59,9 +72,9 @@ legacy.SaveFile = VerifiedSaveFile
 
 
 def taskbar_hero_is_running_fail_safe() -> bool:
-    """No Windows, falha de detecção é tratada como estado inseguro para salvar."""
+    """Falha de detecção é tratada como estado inseguro para salvar."""
     if os.name != "nt":
-        return False
+        return platform_support.posix_game_is_running_fail_safe()
     system_root = os.environ.get("SystemRoot")
     if not system_root:
         return True
@@ -114,18 +127,58 @@ class FinalProEditor(EnhancedProEditor):
     def save_dump(self) -> None:
         path = getattr(self, "path", None)
         if (
-            self.protected_mode_enabled()
-            and path is not None
+            path is not None
             and path.suffix.lower() == ".es3"
             and getattr(self, "loaded_file_signature", None) is None
         ):
             messagebox.showerror(
                 legacy.APP_NAME,
-                "O Modo Protegido não conseguiu verificar a assinatura do save carregado.\n\n"
+                "Não foi possível verificar a assinatura do save carregado.\n\n"
                 "Para evitar sobrescrever um estado externo desconhecido, reabra o arquivo antes de salvar.",
             )
             return
         super().save_dump()
+
+    def _receipt_directory(self) -> Path:
+        # Fora da pasta do jogo e também fora do diretório temporário do bundle.
+        return platform_support.user_data_dir(legacy.APP_NAME, legacy.APP_DIR, frozen=True) / "persistence"
+
+    def record_saved_persistence(self) -> str:
+        try:
+            record = persistence_audit.make_receipt(self.path, self.save_file, self.save_file._source_sha256)
+            persistence_audit.write_receipt(self._receipt_directory(), self.path, record)
+        except Exception as exc:
+            # A falha de um relatório auxiliar não desfaz um save já confirmado.
+            return f"A gravação foi confirmada, mas o registro de conferência não pôde ser salvo: {exc}"
+        return "Após entrar no jogo, sair e fechar normalmente, use Mais opções → Conferir persistência após jogar."
+
+    def check_saved_persistence(self) -> None:
+        path = getattr(self, "path", None)
+        if path is None or path.suffix.lower() != ".es3":
+            messagebox.showinfo(legacy.APP_NAME, "Abra o SaveFile_Live.es3 para conferir os itens. Um JSON não é carregado pelo jogo.")
+            return
+        if legacy.taskbar_hero_is_running():
+            messagebox.showerror(legacy.APP_NAME, "Feche o jogo normalmente antes de conferir. Não foi possível confirmar que está fechado.")
+            return
+        try:
+            previous = persistence_audit.read_receipt(self._receipt_directory(), path)
+            if previous is None:
+                messagebox.showinfo(legacy.APP_NAME, "Ainda não há registro de uma gravação feita por esta versão do editor para este arquivo.")
+                return
+            current_save = VerifiedSaveFile.load(path)
+            if not current_save.integrity_valid:
+                raise ValueError("a assinatura do arquivo relido não confere")
+            current = persistence_audit.make_receipt(path, current_save, current_save._source_sha256)
+            report = persistence_audit.compare_receipts(previous, current)
+            text = persistence_audit.describe_comparison(report)
+            if getattr(self, "dirty", False):
+                text += "\n\nHá alterações pendentes no editor. A conferência leu o disco e preservou essas alterações em memória."
+            if report["missing"] or report["unlocated"]:
+                messagebox.showwarning(legacy.APP_NAME, text)
+            else:
+                messagebox.showinfo(legacy.APP_NAME, text)
+        except Exception as exc:
+            messagebox.showerror(legacy.APP_NAME, f"Não foi possível conferir a persistência:\n{exc}")
 
     def on_protected_mode_changed(self) -> None:
         enabled = bool(self.protected_mode_var.get())
@@ -159,25 +212,17 @@ class FinalProEditor(EnhancedProEditor):
         super().open_create_item_dialog(initial_target, local_market_notice)
 
     def warn_game_reorganizes_once(self) -> None:
-        """Explica, uma vez por sessão, por que itens criados/duplicados somem.
-
-        O jogo reordena e valida o inventário e o armazém ao carregar o save, e
-        pode realocar ou descartar itens que o editor criou. O editor não força o
-        jogo a aceitá-los: quem decide é a validação do jogo. Sem este aviso, o
-        item "sumia" no jogo sem explicação — a dúvida que motivou esta versão."""
+        """Distingue edição local de confirmação depois de jogar."""
         if getattr(self, "_reorg_warning_shown", False):
             return
         self._reorg_warning_shown = True
         messagebox.showwarning(
             legacy.APP_NAME,
             "Sobre itens criados ou duplicados:\n\n"
-            "O jogo reorganiza e valida o inventário e o armazém ao carregar o save. "
-            "Ele reordena os itens por conta própria e pode REALOCAR ou DESCARTAR "
-            "itens criados/duplicados por editor, sem aviso — por isso um item pode "
-            "existir no save e sumir depois que você abre o jogo.\n\n"
-            "O editor agora agrupa a colocação junto de itens do mesmo tipo para "
-            "reduzir isso, mas não há como garantir que o jogo aceite o item.\n\n"
-            "Feche o jogo antes de salvar e confira dentro do jogo depois de abrir. "
+            "A gravação local será relida e conferida. A aceitação pelo jogo precisa "
+            "ser verificada depois de entrar, sair e fechar normalmente.\n\n"
+            "Use Mais opções → Conferir persistência após jogar para comparar "
+            "os IDs dos itens e distinguir mudança de posição de ausência.\n\n"
             "Itens obtidos por métodos anormais podem gerar restrição do jogo ou do Mercado.",
         )
 
@@ -186,7 +231,7 @@ class FinalProEditor(EnhancedProEditor):
         item_key: int,
         quantity: int = 1,
         target: str = "Inventario",
-        enchanted: bool = True,
+        enchanted: bool = False,
     ) -> list[dict]:
         if self.protected_mode_enabled():
             messagebox.showwarning(
@@ -233,16 +278,19 @@ def main() -> None:
     app = FinalProEditor(root)
     requested = Path(sys.argv[1]) if len(sys.argv) > 1 and not str(sys.argv[1]).startswith("-") else None
     default_dump = legacy.APP_DIR / "player_dump.json"
-    if requested and requested.is_file():
-        app.load_dump(requested)
-    elif default_dump.exists():
-        app.load_dump(default_dump)
+    if requested is not None:
+        if requested.is_file():
+            app.load_dump(requested)
+        else:
+            messagebox.showerror(legacy.APP_NAME, f"O arquivo solicitado não foi encontrado:\n{requested}")
     elif legacy.DEFAULT_SAVE_FILE.is_file():
         # Descobrir o caminho do save não bastava: até aqui a descoberta só
         # escolhia a pasta inicial do seletor, e o usuário precisava confirmar o
         # mesmo arquivo a cada abertura. Carregar é leitura — nada é gravado até
         # Salvar alterações, e o Modo Protegido continua governando a gravação.
         app.load_dump(legacy.DEFAULT_SAVE_FILE)
+    elif default_dump.is_file():
+        app.load_dump(default_dump)
     root.mainloop()
 
 
