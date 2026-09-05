@@ -33,7 +33,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
-        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py test_item_persistence.py
       - name: Smoke test compatibility source entry
         shell: pwsh
         run: |
@@ -55,7 +55,7 @@ jobs:
           $item = Get-Item $exe
           $fileVersion = ([string]$item.VersionInfo.FileVersion).Trim()
           $productVersion = ([string]$item.VersionInfo.ProductVersion).Trim()
-          $allowedVersions = @('3.4.0', '3.4.0.0')
+          $allowedVersions = @('3.4.4', '3.4.4.0')
           Write-Host "Executável gerado: $($item.Length) bytes · FileVersion $fileVersion · ProductVersion $productVersion"
           if ($allowedVersions -notcontains $fileVersion) { throw "FileVersion inesperada: $fileVersion" }
           if ($allowedVersions -notcontains $productVersion) { throw "ProductVersion inesperada: $productVersion" }
@@ -90,7 +90,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.0-windows
+          name: HollyEditTBH-v3.4.4-windows
           path: |
             dist/HollyEditTBH.exe
             dist/SHA256SUMS.txt
@@ -114,7 +114,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
-        run: xvfb-run -a python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py
+        run: xvfb-run -a python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py test_item_persistence.py
       - name: Install pinned PyInstaller
         run: python -m pip install --disable-pip-version-check -r requirements-build.txt
       - name: Build Linux binary
@@ -136,7 +136,7 @@ jobs:
       - name: Upload Linux package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.0-linux
+          name: HollyEditTBH-v3.4.4-linux
           path: |
             dist/HollyEditTBH
             dist/SHA256SUMS.txt
@@ -156,7 +156,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Run regression suite
-        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py
+        run: python -m unittest -v test_hollyedittbh.py test_intelligence_v33.py test_market_ranking_v33.py test_hero_profiles_v33.py test_final_audit_v331.py test_hardening_v332.py test_v340_coins_and_policy.py test_v341_ux_and_portability.py test_v342_stash_geometry.py test_item_persistence.py
       - name: Install pinned PyInstaller
         run: python -m pip install --disable-pip-version-check -r requirements-build.txt
       - name: Build macOS bundle
@@ -183,7 +183,7 @@ jobs:
       - name: Upload macOS package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: HollyEditTBH-v3.4.0-macos
+          name: HollyEditTBH-v3.4.4-macos
           path: |
             dist/HollyEditTBH-macos.zip
             dist/SHA256SUMS.txt

@@ -66,8 +66,8 @@ if IS_MACOS:
         bundle_identifier='com.hollygm.hollyedittbh',
         info_plist={
             'CFBundleDisplayName': 'HollyEditTBH',
-            'CFBundleShortVersionString': '3.4.0',
-            'CFBundleVersion': '3.4.0',
+            'CFBundleShortVersionString': '3.4.4',
+            'CFBundleVersion': '3.4.4',
             'NSHighResolutionCapable': True,
         },
     )

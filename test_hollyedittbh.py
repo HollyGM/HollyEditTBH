@@ -479,7 +479,7 @@ class ItemLifecycleTests(unittest.TestCase):
         stash_uids = {safe_int(slot["ItemUniqueId"]) for slot in editor.data["player"]["stashSaveDatas"]}
         self.assertIn(612, stash_uids)
 
-    def test_equip_item_fails_cleanly_when_no_space_anywhere(self):
+    def test_equip_item_reuses_the_slot_freed_in_a_full_stash(self):
         editor = self.build(inventory_slots=1, stash_slots=1)
         hero = editor.data["player"]["heroSaveDatas"][0]
         self.make_amulet(editor, 622, target=None)
@@ -488,10 +488,9 @@ class ItemLifecycleTests(unittest.TestCase):
         new_item = editor.items_by_uid[621]
         editor.data["player"]["inventorySaveDatas"][0]["ItemUniqueId"] = 999
 
-        with patch("tbh_save_editor.messagebox.showerror") as error:
-            self.assertFalse(editor.equip_item(hero, 6, new_item))
-        error.assert_called_once()
-        self.assertEqual(hero["equippedItemIds"][6], 622)
+        self.assertTrue(editor.equip_item(hero, 6, new_item))
+        self.assertEqual(hero["equippedItemIds"][6], 621)
+        self.assertEqual(editor.data["player"]["stashSaveDatas"][0]["ItemUniqueId"], 622)
 
     def test_unequip_slot_returns_item_to_inventory(self):
         editor = self.build()

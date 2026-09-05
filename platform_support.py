@@ -188,7 +188,7 @@ def game_save_dir_candidates(home: Path | None = None, platform: str | None = No
 
 
 def default_game_save_dir(home: Path | None = None, platform: str | None = None) -> Path:
-    """Primeira pasta de save que existe; sem nenhuma, a canônica da plataforma.
+    """Prefere uma pasta com save a um prefixo vazio de outra instalação.
 
     Devolver a canônica em vez de ``None`` mantém o comportamento histórico:
     a interface só usa este caminho como diretório inicial do seletor e como
@@ -197,11 +197,50 @@ def default_game_save_dir(home: Path | None = None, platform: str | None = None)
     candidates = game_save_dir_candidates(home, platform)
     for candidate in candidates:
         try:
+            if (candidate / SAVE_FILE_NAME).is_file():
+                return candidate
+        except OSError:
+            continue
+    for candidate in candidates:
+        try:
             if candidate.is_dir():
                 return candidate
         except OSError:
             continue
     return candidates[0]
+
+
+def posix_game_is_running_fail_safe() -> bool:
+    """Detecta o jogo nativo ou sob Wine/Proton; falha de consulta bloqueia salvar.
+
+    Só inspeciona argumentos de executáveis Wine conhecidos. Procurar o nome
+    em qualquer linha de comando também confundiria editores, scripts e testes
+    que apenas mencionam o jogo com o próprio processo do jogo.
+    """
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-A", "-ww", "-o", "comm=", "-o", "args="],
+            capture_output=True, text=True, errors="replace", timeout=3, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if result.returncode != 0 or not result.stdout.strip():
+        return True
+    game_names = {"taskbarhero", "taskbarhero.exe", "taskbarhero.x86_64"}
+    wine_names = {"wine", "wine64", "wine-preloader", "wine64-preloader", "start.exe"}
+    game_path = re.compile(
+        r"(?:^|[/\\\s\"'])taskbarhero(?:\.exe|\.x86_64)?(?=$|[\s\"'])", re.IGNORECASE
+    )
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if not parts:
+            continue
+        name = re.split(r"[/\\]", parts[0])[-1].casefold()
+        if name in game_names:
+            return True
+        if name in wine_names and len(parts) > 1 and game_path.search(parts[1]):
+            return True
+    return False
 
 
 def user_data_dir(app_name: str, fallback: Path, frozen: bool = False, platform: str | None = None) -> Path:
