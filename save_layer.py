@@ -121,7 +121,7 @@ class SaveFile:
  
     def _serialize_inner(self, obj):
         # compact, raw UTF-8; semantically equivalent to Newtonsoft
-        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
  
     def to_es3_bytes(self):
         acc = self._serialize_inner(self.account)
@@ -134,7 +134,7 @@ class SaveFile:
         self._es3["SystemInfo"]["value"] = sysinfo
         self.integrity_valid = True
  
-        text = json.dumps(self._es3, ensure_ascii=False, indent="\t")
+        text = json.dumps(self._es3, ensure_ascii=False, indent="\t", allow_nan=False)
         return es3_encrypt(text.encode("utf-8"), self.password)
  
     def save(self, path, backup=True):

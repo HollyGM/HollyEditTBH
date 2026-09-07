@@ -269,7 +269,7 @@ class UnreachableSlotTests(unittest.TestCase):
         editor, _ = self.build(presos=2)
         avisos = [issue for issue in editor.validate_save() if issue["code"] == "unreachable_slot"]
         self.assertEqual(len(avisos), 2)
-        self.assertEqual({issue["severity"] for issue in avisos}, {"AVISO"})
+        self.assertEqual({issue["severity"] for issue in avisos}, {"ERRO"})
         self.assertIn("não aparece no jogo", avisos[0]["message"])
 
     def test_rescue_moves_them_back_without_creating_or_losing_anything(self):

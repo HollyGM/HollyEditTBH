@@ -486,7 +486,7 @@ class StartupAutoLoadTests(unittest.TestCase):
         self.run_main(["hollyedittbh_final.py", str(requested)], save_file=save_file, app_dir=self.tmp / "app")
         self.assertEqual(self.loaded, [requested])
 
-    def test_a_local_dump_still_wins_over_the_game_save(self):
+    def test_the_live_save_wins_over_a_stale_local_json_dump(self):
         save_file = self.tmp / "SaveFile_Live.es3"
         save_file.write_bytes(b"save")
         app_dir = self.tmp / "app"
@@ -494,7 +494,7 @@ class StartupAutoLoadTests(unittest.TestCase):
         dump = app_dir / "player_dump.json"
         dump.write_text("{}", encoding="utf-8")
         self.run_main(["hollyedittbh_final.py"], save_file=save_file, app_dir=app_dir)
-        self.assertEqual(self.loaded, [dump])
+        self.assertEqual(self.loaded, [save_file])
 
     def test_nothing_is_loaded_when_no_save_was_found(self):
         self.run_main(
@@ -503,6 +503,20 @@ class StartupAutoLoadTests(unittest.TestCase):
             app_dir=self.tmp / "app",
         )
         self.assertEqual(self.loaded, [])
+
+    def test_missing_explicit_path_does_not_fall_back_to_a_different_save(self):
+        save_file = self.tmp / "SaveFile_Live.es3"
+        save_file.write_bytes(b"save")
+        with patch.object(self.module.messagebox, "showerror") as error:
+            self.run_main(["hollyedittbh_final.py", str(self.tmp / "missing.es3")], save_file=save_file, app_dir=self.tmp)
+        self.assertEqual(self.loaded, [])
+        error.assert_called_once()
+
+    def test_json_remains_a_fallback_when_no_live_save_exists(self):
+        dump = self.tmp / "player_dump.json"
+        dump.write_text("{}", encoding="utf-8")
+        self.run_main(["hollyedittbh_final.py"], save_file=self.tmp / "missing.es3", app_dir=self.tmp)
+        self.assertEqual(self.loaded, [dump])
 
 
 class SteamAppIdTests(unittest.TestCase):
@@ -563,7 +577,8 @@ class EditorPortabilityTests(unittest.TestCase):
         for runner in ("windows-latest", "ubuntu-latest", "macos-latest"):
             self.assertIn(runner, workflow)
         for artifact in ("-windows", "-linux", "-macos"):
-            self.assertIn(f"HollyEditTBH-v3.4.0{artifact}", workflow)
+            from app_meta import APP_VERSION
+            self.assertIn(f"HollyEditTBH-v{APP_VERSION}{artifact}", workflow)
 
 
 class ScrollableTableTests(unittest.TestCase):
